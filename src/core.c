@@ -52,6 +52,22 @@ static int strcasecmp_simple(const char *s1, const char *s2) {
     return *s1 - *s2;
 }
 
+static int strncasecmp_simple(const char *s1, const char *s2, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        char c1 = s1[i];
+        char c2 = s2[i];
+        if (!c1 || !c2) return c1 - c2;
+        if (c1 >= 'A' && c1 <= 'Z') c1 += 32;
+        if (c2 >= 'A' && c2 <= 'Z') c2 += 32;
+        if (c1 != c2) return c1 - c2;
+    }
+    return 0;
+}
+
+static int is_drive_letter(char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+}
+
 static int is_absolute_path(const char *p) {
     if (!p || !p[0]) return 0;
     if (p[0] == '/' || p[0] == '\\') return 1;
@@ -219,13 +235,38 @@ bool retro_load_game(const struct retro_game_info *g) {
             // Trim leading/trailing spaces
             char* trimmed = line;
             while (*trimmed == ' ' || *trimmed == '\t') trimmed++;
-            char* end = trimmed + strlen(trimmed) - 1;
+            size_t tlen = strlen(trimmed);
+            if (tlen == 0) continue;
+            char* end = trimmed + tlen - 1;
             while (end >= trimmed && (*end == ' ' || *end == '\t' || *end == '\r')) {
                 *end = '\0';
                 end--;
             }
 
+            // Strip UTF-8 BOM if present (common in M3U files)
+            if ((unsigned char)trimmed[0] == 0xEF && (unsigned char)trimmed[1] == 0xBB && (unsigned char)trimmed[2] == 0xBF)
+                trimmed += 3;
+
+            // Strip surrounding quotes
+            tlen = strlen(trimmed);
+            if (tlen >= 2 && ((trimmed[0] == '"' && trimmed[tlen - 1] == '"') || (trimmed[0] == '\'' && trimmed[tlen - 1] == '\''))) {
+                trimmed[tlen - 1] = '\0';
+                trimmed++;
+            }
+
             if (trimmed[0] == '\0' || trimmed[0] == '#') continue;
+
+            // Handle file:// URIs
+            bool file_is_unc = false;
+            if (strncasecmp_simple(trimmed, "file://", 7) == 0) {
+                trimmed += 7;
+                if (strncasecmp_simple(trimmed, "localhost/", 10) == 0 || strncasecmp_simple(trimmed, "localhost\\", 10) == 0)
+                    trimmed += 10;
+                if (trimmed[0] == '/' && is_drive_letter(trimmed[1]) && trimmed[2] == ':')
+                    trimmed++;
+                else if (trimmed[0] != '/' && !is_drive_letter(trimmed[0]))
+                    file_is_unc = true;
+            }
 
             // Fix backslashes for standard C file handling
             for (int i = 0; trimmed[i]; i++) {
@@ -233,8 +274,11 @@ bool retro_load_game(const struct retro_game_info *g) {
             }
             char resolved[1024];
             int written = 0;
-            if (is_absolute_path(trimmed) || !m3u_dir[0]) {
-                written = snprintf(resolved, sizeof(resolved), "%s", trimmed);
+            if (is_absolute_path(trimmed) || file_is_unc || !m3u_dir[0]) {
+                if (file_is_unc)
+                    written = snprintf(resolved, sizeof(resolved), "//%s", trimmed);
+                else
+                    written = snprintf(resolved, sizeof(resolved), "%s", trimmed);
             } else {
                 written = snprintf(resolved, sizeof(resolved), "%s/%s", m3u_dir, trimmed);
             }
