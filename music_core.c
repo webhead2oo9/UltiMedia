@@ -583,12 +583,14 @@ void retro_run(void) {
             if (current_type == MP3) drmp3_seek_to_pcm_frame((drmp3*)decoder, cur_frame);
             else if (current_type == WAV) drwav_seek_to_pcm_frame((drwav*)decoder, cur_frame);
             else if (current_type == OGG) stb_vorbis_seek((stb_vorbis*)decoder, cur_frame);
+            else if (current_type == FLAC) drflac_seek_to_pcm_frame((drflac*)decoder, cur_frame);
             ff_rw_icon_timer = 15; ff_rw_dir = 1;
         } else if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT)) {
             cur_frame = (cur_frame < (uint64_t)seek_speed) ? 0 : cur_frame - (uint64_t)seek_speed;
             if (current_type == MP3) drmp3_seek_to_pcm_frame((drmp3*)decoder, cur_frame);
             else if (current_type == WAV) drwav_seek_to_pcm_frame((drwav*)decoder, cur_frame);
             else if (current_type == OGG) stb_vorbis_seek((stb_vorbis*)decoder, cur_frame);
+            else if (current_type == FLAC) drflac_seek_to_pcm_frame((drflac*)decoder, cur_frame);
             ff_rw_icon_timer = 15; ff_rw_dir = -1;
         }
     }
