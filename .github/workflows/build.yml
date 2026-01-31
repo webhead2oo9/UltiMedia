@@ -26,7 +26,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: deps
-          key: deps-v1
+          key: deps-v2
 
       - name: Fetch dependencies
         run: |
@@ -37,6 +37,8 @@ jobs:
             https://raw.githubusercontent.com/mackron/dr_libs/master/dr_mp3.h
           [ -f deps/dr_wav.h ] || curl -sL -o deps/dr_wav.h \
             https://raw.githubusercontent.com/mackron/dr_libs/master/dr_wav.h
+          [ -f deps/dr_flac.h ] || curl -sL -o deps/dr_flac.h \
+            https://raw.githubusercontent.com/mackron/dr_libs/master/dr_flac.h
           [ -f deps/stb_image.h ] || curl -sL -o deps/stb_image.h \
             https://raw.githubusercontent.com/nothings/stb/master/stb_image.h
           [ -f deps/stb_vorbis.c ] || curl -sL -o deps/stb_vorbis.c \

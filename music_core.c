@@ -10,6 +10,8 @@
 #include "dr_mp3.h"
 #define DR_WAV_IMPLEMENTATION
 #include "dr_wav.h"
+#define DR_FLAC_IMPLEMENTATION
+#include "dr_flac.h"
 #define STB_IMAGE_IMPLEMENTATION
 
 #include "stb_image.h"
@@ -41,7 +43,7 @@ static retro_audio_sample_batch_t audio_batch_cb;
 static retro_input_poll_t input_poll_cb;
 static retro_input_state_t input_state_cb;
 
-typedef enum { NONE, MP3, WAV, OGG } AudioType;
+typedef enum { NONE, MP3, WAV, OGG, FLAC } AudioType;
 static AudioType current_type = NONE;
 static void *decoder = NULL;
 static char *tracks[256];
@@ -253,8 +255,9 @@ void open_track(int idx) {
     if (decoder) {
         if (current_type == MP3) drmp3_uninit((drmp3*)decoder);
         else if (current_type == WAV) drwav_uninit((drwav*)decoder);
+        else if (current_type == FLAC) drflac_close((drflac*)decoder);
         else if (current_type == OGG) stb_vorbis_close((stb_vorbis*)decoder);
-        if (current_type != OGG) free(decoder);
+        if (current_type != OGG && current_type != FLAC) free(decoder);
         decoder = NULL;
     }
     
@@ -282,6 +285,12 @@ void open_track(int idx) {
             current_type = OGG; decoder = ogg; load_success = true;
             stb_vorbis_info info = stb_vorbis_get_info(ogg);
             source_rate = info.sample_rate; total_frames = stb_vorbis_stream_length_in_samples(ogg);
+        }
+    } else if (ext && strcasecmp_simple(ext, ".flac") == 0) {
+        drflac* flac = drflac_open_file(p, NULL);
+        if (flac) {
+            current_type = FLAC; decoder = flac; load_success = true;
+            source_rate = flac->sampleRate; total_frames = flac->totalPCMFrameCount;
         }
     } else {
         decoder = malloc(sizeof(drwav));
@@ -483,6 +492,9 @@ if (decoder && !is_paused) {
     } else if (current_type == OGG) {
         read = stb_vorbis_get_samples_short_interleaved((stb_vorbis*)decoder, 2, resample_in_buf, needed * 2);
         channels = 2;
+    } else if (current_type == FLAC) {
+        read = drflac_read_pcm_frames_s16((drflac*)decoder, needed, resample_in_buf);
+        channels = ((drflac*)decoder)->channels;
     }
 
     if (read < 2 || (read < needed && cur_frame > 1000)) { 
@@ -849,8 +861,9 @@ void retro_deinit(void) {
     if (decoder) {
         if (current_type == MP3) drmp3_uninit((drmp3*)decoder);
         else if (current_type == WAV) drwav_uninit((drwav*)decoder);
+        else if (current_type == FLAC) drflac_close((drflac*)decoder);
         else if (current_type == OGG) stb_vorbis_close((stb_vorbis*)decoder);
-        if (current_type != OGG) free(decoder);
+        if (current_type != OGG && current_type != FLAC) free(decoder);
         decoder = NULL;
     }
     free(framebuffer);
@@ -862,7 +875,7 @@ void retro_set_audio_sample_batch(retro_audio_sample_batch_t cb) { audio_batch_c
 void retro_set_input_poll(retro_input_poll_t cb) { input_poll_cb = cb; }
 void retro_set_input_state(retro_input_state_t cb) { input_state_cb = cb; }
 unsigned retro_api_version(void) { return RETRO_API_VERSION; }
-void retro_get_system_info(struct retro_system_info *i) { i->library_name="UltiMedia UGC"; i->library_version="15.0"; i->valid_extensions="mp3|wav|m3u|ogg"; i->need_fullpath=true; }
+void retro_get_system_info(struct retro_system_info *i) { i->library_name="UltiMedia UGC"; i->library_version="16.0"; i->valid_extensions="mp3|wav|m3u|ogg|flac"; i->need_fullpath=true; }
 void retro_get_system_av_info(struct retro_system_av_info *info) {
     // Default values until a file is loaded
     info->timing.fps = 60.0;
@@ -878,8 +891,9 @@ void retro_unload_game() {
     if (decoder) {
         if (current_type == MP3) drmp3_uninit((drmp3*)decoder);
         else if (current_type == WAV) drwav_uninit((drwav*)decoder);
+        else if (current_type == FLAC) drflac_close((drflac*)decoder);
         else if (current_type == OGG) stb_vorbis_close((stb_vorbis*)decoder);
-        if (current_type != OGG) free(decoder);
+        if (current_type != OGG && current_type != FLAC) free(decoder);
         decoder = NULL;
     }
     if (art_buffer) {
