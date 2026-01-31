@@ -68,6 +68,72 @@ static int is_drive_letter(char c) {
     return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
 }
 
+static int read_utf16_line(FILE *f, char *out, size_t out_sz, bool le) {
+    if (!out || out_sz == 0) return 0;
+    size_t idx = 0;
+    for (;;) {
+        unsigned char b[2];
+        size_t r = fread(b, 1, 2, f);
+        if (r < 2) {
+            if (idx == 0) return 0;
+            break;
+        }
+        uint16_t ch = le ? (uint16_t)(b[0] | (b[1] << 8)) : (uint16_t)(b[1] | (b[0] << 8));
+        if (ch == 0xFEFF) continue;
+        if (ch == '\n') break;
+        if (ch == '\r') {
+            long pos = ftell(f);
+            if (pos >= 0) {
+                unsigned char nb[2];
+                size_t nr = fread(nb, 1, 2, f);
+                if (nr == 2) {
+                    uint16_t ch2 = le ? (uint16_t)(nb[0] | (nb[1] << 8)) : (uint16_t)(nb[1] | (nb[0] << 8));
+                    if (ch2 != '\n') fseek(f, pos, SEEK_SET);
+                }
+            }
+            break;
+        }
+        if (idx + 1 < out_sz) out[idx++] = (ch < 0x80) ? (char)ch : '?';
+    }
+    out[idx] = '\0';
+    return 1;
+}
+
+static size_t detect_m3u_encoding(FILE *f, bool *utf16_le, bool *utf16_be) {
+    unsigned char buf[64];
+    size_t n = fread(buf, 1, sizeof(buf), f);
+    size_t skip = 0;
+    *utf16_le = false;
+    *utf16_be = false;
+
+    if (n >= 2 && buf[0] == 0xFF && buf[1] == 0xFE) {
+        *utf16_le = true;
+        skip = 2;
+    } else if (n >= 2 && buf[0] == 0xFE && buf[1] == 0xFF) {
+        *utf16_be = true;
+        skip = 2;
+    } else if (n >= 3 && buf[0] == 0xEF && buf[1] == 0xBB && buf[2] == 0xBF) {
+        skip = 3; // UTF-8 BOM
+    } else if (n >= 4) {
+        size_t even_zero = 0;
+        size_t odd_zero = 0;
+        for (size_t i = 0; i + 1 < n; i += 2) {
+            if (buf[i] == 0) even_zero++;
+            if (buf[i + 1] == 0) odd_zero++;
+        }
+        if (odd_zero > even_zero * 2 && odd_zero >= 4) *utf16_le = true;
+        else if (even_zero > odd_zero * 2 && even_zero >= 4) *utf16_be = true;
+    }
+
+    fseek(f, (long)skip, SEEK_SET);
+    return skip;
+}
+
+static int read_m3u_line(FILE *f, char *out, size_t out_sz, bool utf16_le, bool utf16_be) {
+    if (!utf16_le && !utf16_be) return fgets(out, (int)out_sz, f) != NULL;
+    return read_utf16_line(f, out, out_sz, utf16_le);
+}
+
 static int is_absolute_path(const char *p) {
     if (!p || !p[0]) return 0;
     if (p[0] == '/' || p[0] == '\\') return 1;
@@ -209,11 +275,14 @@ bool retro_load_game(const struct retro_game_info *g) {
     if (ext && strcasecmp_simple(ext, ".m3u") == 0) {
         fprintf(stderr, "[MusicCore] Attempting to open M3U: %s\n", g->path);
 
-        FILE *f = fopen(g->path, "r");
+        FILE *f = fopen(g->path, "rb");
         if (!f) {
             fprintf(stderr, "[MusicCore] Failed to open M3U at %s\n", g->path);
             return false;
         }
+        bool m3u_utf16_le = false;
+        bool m3u_utf16_be = false;
+        detect_m3u_encoding(f, &m3u_utf16_le, &m3u_utf16_be);
         strncpy(m3u_base_path, g->path, 1023);
         m3u_base_path[sizeof(m3u_base_path) - 1] = '\0';
         const char* last = strrchr(g->path, '/');
@@ -228,7 +297,7 @@ bool retro_load_game(const struct retro_game_info *g) {
             m3u_dir[sizeof(m3u_dir) - 1] = '\0';
         }
         char line[1024];
-        while (fgets(line, sizeof(line), f) && track_count < 256) {
+        while (read_m3u_line(f, line, sizeof(line), m3u_utf16_le, m3u_utf16_be) && track_count < 256) {
             // Clean the line aggressively
             line[strcspn(line, "\r\n")] = 0;
 
