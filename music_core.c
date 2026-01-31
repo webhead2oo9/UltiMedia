@@ -23,6 +23,18 @@ void update_variables(void);
 void open_track(int idx);
 void draw_pixel(int x, int y, uint16_t color);
 void draw_text(int x, int y, const char* txt, uint16_t color);
+
+// Helper function for case-insensitive string comparison
+static int strcasecmp_simple(const char *s1, const char *s2) {
+    while (*s1 && *s2) {
+        char c1 = (*s1 >= 'A' && *s1 <= 'Z') ? *s1 + 32 : *s1;
+        char c2 = (*s2 >= 'A' && *s2 <= 'Z') ? *s2 + 32 : *s2;
+        if (c1 != c2) return c1 - c2;
+        s1++;
+        s2++;
+    }
+    return *s1 - *s2;
+}
 static retro_environment_t environ_cb;
 static retro_video_refresh_t video_cb;
 static retro_audio_sample_batch_t audio_batch_cb;
@@ -49,7 +61,6 @@ static float viz_levels[20] = {0};
 static char display_str[256], time_str[32];
 static uint64_t total_frames = 0, cur_frame = 0;
 static int ff_rw_icon_timer = 0, ff_rw_dir = 0;
-static char m3u_dir[1024] = {0};
 // High-performance static buffer for resampling
 static int16_t resample_in_buf[SAMPLES_PER_FRAME * 8]; 
 
@@ -109,7 +120,8 @@ void open_track(int idx) {
     if (decoder) {
         if (current_type == MP3) drmp3_uninit((drmp3*)decoder);
         else if (current_type == WAV) drwav_uninit((drwav*)decoder);
-        free(decoder);
+        else if (current_type == OGG) stb_vorbis_close((stb_vorbis*)decoder);
+        if (current_type != OGG) free(decoder);
         decoder = NULL;
     }
     
@@ -124,13 +136,14 @@ void open_track(int idx) {
     
     // 4. Initialize Decoder (WITH ERROR CHECKING)
     bool load_success = false;
-    if (strstr(p, ".mp3") || strstr(p, ".MP3")) {
+    const char* ext = strrchr(p, '.');
+    if (ext && strcasecmp_simple(ext, ".mp3") == 0) {
         decoder = malloc(sizeof(drmp3));
-        if (drmp3_init_file((drmp3*)decoder, p, NULL)) { 
-            current_type = MP3; source_rate = ((drmp3*)decoder)->sampleRate; 
+        if (decoder && drmp3_init_file((drmp3*)decoder, p, NULL)) {
+            current_type = MP3; source_rate = ((drmp3*)decoder)->sampleRate;
             total_frames = ((drmp3*)decoder)->totalPCMFrameCount; load_success = true;
         }
-    } else if (strstr(p, ".ogg") || strstr(p, ".OGG")) {
+    } else if (ext && strcasecmp_simple(ext, ".ogg") == 0) {
         int err = 0; stb_vorbis* ogg = stb_vorbis_open_filename(p, &err, NULL);
         if (ogg) {
             current_type = OGG; decoder = ogg; load_success = true;
@@ -139,8 +152,8 @@ void open_track(int idx) {
         }
     } else {
         decoder = malloc(sizeof(drwav));
-        if (drwav_init_file((drwav*)decoder, p, NULL)) { 
-            current_type = WAV; source_rate = ((drwav*)decoder)->sampleRate; 
+        if (decoder && drwav_init_file((drwav*)decoder, p, NULL)) {
+            current_type = WAV; source_rate = ((drwav*)decoder)->sampleRate;
             total_frames = ((drwav*)decoder)->totalPCMFrameCount; load_success = true;
         }
     }
@@ -148,7 +161,7 @@ void open_track(int idx) {
     // 5. Handle Failure
     if (!load_success) {
         if (decoder) { free(decoder); decoder = NULL; }
-        sprintf(display_str, "ERROR LOADING: %s", p); // Show error on screen
+        snprintf(display_str, sizeof(display_str), "ERROR LOADING: %.230s", p); // Show error on screen
         return;
     }
 resample_phase = 0.0;
@@ -181,6 +194,7 @@ resample_phase = 0.0;
     else {
         const char* b = strrchr(p, '/'); if(!b) b=strrchr(p, '\\');
         strncpy(display_str, b ? b + 1 : p, 250);
+        display_str[250] = '\0';
         strcat(display_str, "   ");
     }
     scroll_x = 320;
@@ -199,7 +213,8 @@ resample_phase = 0.0;
         strncpy(music_dir, p, dir_len);
         music_dir[dir_len] = '\0';
         const char* p_slash = strrchr(music_dir, '/'); if(!p_slash) p_slash = strrchr(music_dir, '\\');
-        strcpy(parent_name, p_slash ? p_slash + 1 : music_dir);
+        strncpy(parent_name, p_slash ? p_slash + 1 : music_dir, sizeof(parent_name) - 1);
+        parent_name[sizeof(parent_name) - 1] = '\0';
     }
 
     // B. Main Search Loop
@@ -246,7 +261,7 @@ resample_phase = 0.0;
                 
                 // First: Look for 'APIC' or 'PIC' (ID3v2 Picture Frames)
                 // If we find the frame, we know an image is nearby.
-                for (size_t i = 0; i < bytes_read - 10; i++) {
+                for (size_t i = 0; i + 10 < bytes_read; i++) {
                     // Check for JPEG (FF D8 FF)
                     if (head[i] == 0xFF && head[i+1] == 0xD8 && head[i+2] == 0xFF) {
                         img_data = stbi_load_from_memory(head + i, (int)(bytes_read - i), &art_w_src, &art_h_src, NULL, 3);
@@ -266,10 +281,15 @@ resample_phase = 0.0;
 
     // Prepare for Rendering (RGB565)
     if (img_data) {
-        art_buffer = malloc(art_w_src * art_h_src * 2);
-        for (int i = 0; i < art_w_src * art_h_src; i++) {
-            uint8_t r = img_data[i*3], g = img_data[i*3+1], b = img_data[i*3+2];
-            art_buffer[i] = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
+        if (art_w_src > 0 && art_h_src > 0 && art_w_src <= 4096 && art_h_src <= 4096) {
+            size_t art_size = (size_t)art_w_src * art_h_src * 2;
+            art_buffer = malloc(art_size);
+            if (art_buffer) {
+                for (int i = 0; i < art_w_src * art_h_src; i++) {
+                    uint8_t r = img_data[i*3], g = img_data[i*3+1], b = img_data[i*3+2];
+                    art_buffer[i] = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
+                }
+            }
         }
         stbi_image_free(img_data);
     }
@@ -464,7 +484,8 @@ bool retro_load_game(const struct retro_game_info *g) {
     track_count = 0;
 
     // 2. Check for M3U extension
-    if (strstr(g->path, ".m3u") || strstr(g->path, ".M3U")) {
+    const char* ext = strrchr(g->path, '.');
+    if (ext && strcasecmp_simple(ext, ".m3u") == 0) {
         // Log the path to help you see what EmuVR is actually passing
         // (You'll see this in the RetroArch log now)
         fprintf(stderr, "[MusicCore] Attempting to open M3U: %s\n", g->path);
@@ -477,6 +498,7 @@ bool retro_load_game(const struct retro_game_info *g) {
             return false;
         }
  strncpy(m3u_base_path, g->path, 1023);
+        m3u_base_path[sizeof(m3u_base_path) - 1] = '\0';
         char line[1024];
         while (fgets(line, sizeof(line), f) && track_count < 256) {
             // Clean the line aggressively
@@ -513,9 +535,25 @@ bool retro_load_game(const struct retro_game_info *g) {
     return true;
 }
 
-void retro_init(void) {    framebuffer = malloc(fb_width * fb_height * sizeof(uint16_t));
-    if (framebuffer) memset(framebuffer, 0, fb_width * fb_height * sizeof(uint16_t)); }
-void retro_deinit(void) { free(framebuffer); if(art_buffer) free(art_buffer); for(int i=0; i<track_count; i++) free(tracks[i]); }
+void retro_init(void) {
+    framebuffer = malloc(fb_width * fb_height * sizeof(uint16_t));
+    if (framebuffer) {
+        memset(framebuffer, 0, fb_width * fb_height * sizeof(uint16_t));
+    }
+    srand((unsigned int)time(NULL));
+}
+void retro_deinit(void) {
+    if (decoder) {
+        if (current_type == MP3) drmp3_uninit((drmp3*)decoder);
+        else if (current_type == WAV) drwav_uninit((drwav*)decoder);
+        else if (current_type == OGG) stb_vorbis_close((stb_vorbis*)decoder);
+        if (current_type != OGG) free(decoder);
+        decoder = NULL;
+    }
+    free(framebuffer);
+    if(art_buffer) free(art_buffer);
+    for(int i=0; i<track_count; i++) free(tracks[i]);
+}
 void retro_set_video_refresh(retro_video_refresh_t cb) { video_cb = cb; }
 void retro_set_audio_sample_batch(retro_audio_sample_batch_t cb) { audio_batch_cb = cb; }
 void retro_set_input_poll(retro_input_poll_t cb) { input_poll_cb = cb; }
@@ -525,7 +563,7 @@ void retro_get_system_info(struct retro_system_info *i) { i->library_name="UltiM
 void retro_get_system_av_info(struct retro_system_av_info *info) {
     // Default values until a file is loaded
     info->timing.fps = 60.0;
-    info->timing.sample_rate = 44800.0;
+    info->timing.sample_rate = (double)OUT_RATE;
     info->geometry.base_width = fb_width;
     info->geometry.base_height = fb_height;
     info->geometry.max_width = fb_width;
@@ -533,7 +571,26 @@ void retro_get_system_av_info(struct retro_system_av_info *info) {
     info->geometry.aspect_ratio = 4.0 / 3.0;
 }
 void retro_set_audio_sample(retro_audio_sample_t cb) {}
-void retro_unload_game() {}
+void retro_unload_game() {
+    if (decoder) {
+        if (current_type == MP3) drmp3_uninit((drmp3*)decoder);
+        else if (current_type == WAV) drwav_uninit((drwav*)decoder);
+        else if (current_type == OGG) stb_vorbis_close((stb_vorbis*)decoder);
+        if (current_type != OGG) free(decoder);
+        decoder = NULL;
+    }
+    if (art_buffer) {
+        free(art_buffer);
+        art_buffer = NULL;
+    }
+    for (int i = 0; i < track_count; i++) {
+        if (tracks[i]) {
+            free(tracks[i]);
+            tracks[i] = NULL;
+        }
+    }
+    track_count = 0;
+}
 void retro_reset() {}
 size_t retro_serialize_size() { return 0; }
 bool retro_serialize(void *d, size_t s) { return false; }
