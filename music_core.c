@@ -71,7 +71,7 @@ struct {
     int art_y, txt_y, viz_y, bar_y, tim_y, ico_y;
     bool show_art, show_txt, show_viz, show_bar, show_tim, show_ico, lcd_on;
     int viz_bands, viz_mode, viz_peak_hold;
-    bool viz_gradient;
+    bool viz_gradient, use_filename;
 } cfg;
 
 static const uint8_t font8x8[96][8] = {
@@ -135,6 +135,73 @@ uint16_t get_gradient_color(float level) {
     }
 }
 
+// Parse ID3v2 tags from file, returns 1 if found
+static int parse_id3v2(const char* path, char* artist, char* title, char* album, int maxlen) {
+    FILE* f = fopen(path, "rb");
+    if (!f) return 0;
+
+    // 1. Read and validate header
+    unsigned char hdr[10];
+    if (fread(hdr, 1, 10, f) != 10 || memcmp(hdr, "ID3", 3) != 0) {
+        fclose(f);
+        return 0;
+    }
+
+    // 2. Parse syncsafe tag size
+    uint32_t tag_size = ((uint32_t)hdr[6] << 21) | ((uint32_t)hdr[7] << 14) |
+                        ((uint32_t)hdr[8] << 7) | hdr[9];
+
+    // 3. Read tag data (limit to 64KB for safety)
+    if (tag_size > 65536) tag_size = 65536;
+    unsigned char* data = malloc(tag_size);
+    if (!data) { fclose(f); return 0; }
+    size_t bytes_read = fread(data, 1, tag_size, f);
+    fclose(f);
+
+    // 4. Scan frames
+    size_t pos = 0;
+    while (pos + 10 < bytes_read) {
+        char frame_id[5] = {data[pos], data[pos+1], data[pos+2], data[pos+3], 0};
+        uint32_t frame_size = ((uint32_t)data[pos+4] << 24) | ((uint32_t)data[pos+5] << 16) |
+                              ((uint32_t)data[pos+6] << 8) | data[pos+7];
+
+        if (frame_size == 0 || pos + 10 + frame_size > bytes_read) break;
+
+        unsigned char* content = &data[pos + 10];
+        uint8_t encoding = content[0];
+        char* text = (char*)&content[1];
+        int text_len = frame_size - 1;
+
+        // 5. Extract text based on encoding
+        char* dest = NULL;
+        if (strcmp(frame_id, "TIT2") == 0) dest = title;
+        else if (strcmp(frame_id, "TPE1") == 0) dest = artist;
+        else if (strcmp(frame_id, "TALB") == 0) dest = album;
+
+        if (dest && text_len > 0) {
+            if (encoding == 0 || encoding == 3) {
+                // Latin-1 or UTF-8: direct copy
+                int len = (text_len < maxlen-1) ? text_len : maxlen-1;
+                memcpy(dest, text, len);
+                dest[len] = '\0';
+            } else if (encoding == 1 || encoding == 2) {
+                // UTF-16: basic ASCII extraction (skip BOM, take low bytes)
+                int j = 0;
+                int start = (encoding == 1 && text_len >= 2) ? 2 : 0; // skip BOM
+                for (int i = start; i < text_len - 1 && j < maxlen - 1; i += 2) {
+                    if (text[i+1] == 0 && text[i] >= 32) dest[j++] = text[i];
+                }
+                dest[j] = '\0';
+            }
+        }
+
+        pos += 10 + frame_size;
+    }
+
+    free(data);
+    return (title[0] || artist[0]) ? 1 : 0;
+}
+
 void open_track(int idx) {
     if (track_count == 0) return;
 
@@ -191,16 +258,21 @@ resample_phase = 0.0;
     // 6. Reset Playback State
     cur_frame = 0;
     
-    // 7. Load Metadata
-    FILE* f = fopen(p, "rb");
-    if (f) {
-        fseek(f, -128, SEEK_END); char tag[3]; size_t r = fread(tag, 1, 3, f);
-        if (r == 3 && strncmp(tag, "TAG", 3) == 0) {
-            fread(meta_title, 1, 30, f); 
-            fread(meta_artist, 1, 30, f);
-            fread(cur_album, 1, 30, f);
+    // 7. Load Metadata - Try ID3v2 first, fall back to ID3v1 (unless filename-only mode)
+    if (!cfg.use_filename) {
+        if (!parse_id3v2(p, meta_artist, meta_title, cur_album, 31)) {
+            // Fall back to ID3v1
+            FILE* f = fopen(p, "rb");
+            if (f) {
+                fseek(f, -128, SEEK_END); char tag[3]; size_t r = fread(tag, 1, 3, f);
+                if (r == 3 && strncmp(tag, "TAG", 3) == 0) {
+                    fread(meta_title, 1, 30, f);
+                    fread(meta_artist, 1, 30, f);
+                    fread(cur_album, 1, 30, f);
+                }
+                fclose(f);
+            }
         }
-        fclose(f);
     }
     
     // Clean strings
@@ -636,6 +708,7 @@ void update_variables(void) {
     } else cfg.viz_mode = 0;
     var.key = "media_viz_gradient"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.viz_gradient = !strcmp(var.value, "On"); else cfg.viz_gradient = true;
     var.key = "media_viz_peak_hold"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.viz_peak_hold = atoi(var.value); else cfg.viz_peak_hold = 30;
+    var.key = "media_use_filename"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.use_filename = !strcmp(var.value, "On"); else cfg.use_filename = false;
 }
 
 void retro_set_environment(retro_environment_t cb) {
@@ -654,6 +727,7 @@ void retro_set_environment(retro_environment_t cb) {
         { "media_viz_mode", "Viz Mode; Bars|VU Meter|Dots|Line" },
         { "media_viz_gradient", "Viz Gradient; On|Off" },
         { "media_viz_peak_hold", "Peak Hold; 30|0|15|45|60" },
+        { "media_use_filename", "Show Filename Only; Off|On" },
         { NULL, NULL }
     };
     cb(RETRO_ENVIRONMENT_SET_VARIABLES, (void*)vars);
