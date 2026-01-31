@@ -2,10 +2,8 @@ name: Build & Release
 
 on:
   push:
-    branches: [main]
     paths: ['music_core.c']
   pull_request:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
