@@ -147,6 +147,9 @@ static int parse_id3v2(const char* path, char* artist, char* title, char* album,
         return 0;
     }
 
+    uint8_t version = hdr[3];  // 2, 3, or 4
+    uint8_t flags = hdr[5];
+
     // 2. Parse syncsafe tag size
     uint32_t tag_size = ((uint32_t)hdr[6] << 21) | ((uint32_t)hdr[7] << 14) |
                         ((uint32_t)hdr[8] << 7) | hdr[9];
@@ -158,25 +161,64 @@ static int parse_id3v2(const char* path, char* artist, char* title, char* album,
     size_t bytes_read = fread(data, 1, tag_size, f);
     fclose(f);
 
-    // 4. Scan frames
+    // 4. Skip extended header if present
     size_t pos = 0;
-    while (pos + 10 < bytes_read) {
-        char frame_id[5] = {data[pos], data[pos+1], data[pos+2], data[pos+3], 0};
-        uint32_t frame_size = ((uint32_t)data[pos+4] << 24) | ((uint32_t)data[pos+5] << 16) |
-                              ((uint32_t)data[pos+6] << 8) | data[pos+7];
+    if (flags & 0x40) {  // Extended header flag
+        uint32_t ext_size;
+        if (version == 4) {
+            // ID3v2.4: syncsafe size
+            ext_size = ((uint32_t)data[0] << 21) | ((uint32_t)data[1] << 14) |
+                       ((uint32_t)data[2] << 7) | data[3];
+        } else {
+            // ID3v2.3: regular size
+            ext_size = ((uint32_t)data[0] << 24) | ((uint32_t)data[1] << 16) |
+                       ((uint32_t)data[2] << 8) | data[3];
+        }
+        pos = ext_size;
+    }
 
-        if (frame_size == 0 || pos + 10 + frame_size > bytes_read) break;
+    // 5. Scan frames
+    while (pos + 6 < bytes_read) {
+        char frame_id[5] = {0};
+        uint32_t frame_size;
+        int header_size;
 
-        unsigned char* content = &data[pos + 10];
+        if (version == 2) {
+            // ID3v2.2: 3-byte frame ID, 3-byte size (big-endian)
+            if (data[pos] == 0) break;  // Padding
+            frame_id[0] = data[pos]; frame_id[1] = data[pos+1]; frame_id[2] = data[pos+2];
+            frame_size = ((uint32_t)data[pos+3] << 16) | ((uint32_t)data[pos+4] << 8) | data[pos+5];
+            header_size = 6;
+        } else {
+            // ID3v2.3/2.4: 4-byte frame ID, 4-byte size, 2-byte flags
+            if (pos + 10 > bytes_read || data[pos] == 0) break;
+            frame_id[0] = data[pos]; frame_id[1] = data[pos+1];
+            frame_id[2] = data[pos+2]; frame_id[3] = data[pos+3];
+
+            if (version == 4) {
+                // ID3v2.4: syncsafe frame size
+                frame_size = ((uint32_t)data[pos+4] << 21) | ((uint32_t)data[pos+5] << 14) |
+                             ((uint32_t)data[pos+6] << 7) | data[pos+7];
+            } else {
+                // ID3v2.3: regular big-endian size
+                frame_size = ((uint32_t)data[pos+4] << 24) | ((uint32_t)data[pos+5] << 16) |
+                             ((uint32_t)data[pos+6] << 8) | data[pos+7];
+            }
+            header_size = 10;
+        }
+
+        if (frame_size == 0 || pos + header_size + frame_size > bytes_read) break;
+
+        unsigned char* content = &data[pos + header_size];
         uint8_t encoding = content[0];
         char* text = (char*)&content[1];
         int text_len = frame_size - 1;
 
-        // 5. Extract text based on encoding
+        // 6. Match frame ID (v2.2 uses 3-char IDs, v2.3/2.4 use 4-char)
         char* dest = NULL;
-        if (strcmp(frame_id, "TIT2") == 0) dest = title;
-        else if (strcmp(frame_id, "TPE1") == 0) dest = artist;
-        else if (strcmp(frame_id, "TALB") == 0) dest = album;
+        if (strcmp(frame_id, "TIT2") == 0 || strcmp(frame_id, "TT2") == 0) dest = title;
+        else if (strcmp(frame_id, "TPE1") == 0 || strcmp(frame_id, "TP1") == 0) dest = artist;
+        else if (strcmp(frame_id, "TALB") == 0 || strcmp(frame_id, "TAL") == 0) dest = album;
 
         if (dest && text_len > 0) {
             if (encoding == 0 || encoding == 3) {
@@ -185,17 +227,19 @@ static int parse_id3v2(const char* path, char* artist, char* title, char* album,
                 memcpy(dest, text, len);
                 dest[len] = '\0';
             } else if (encoding == 1 || encoding == 2) {
-                // UTF-16: basic ASCII extraction (skip BOM, take low bytes)
+                // UTF-16: extract ASCII chars (skip BOM for encoding 1)
                 int j = 0;
-                int start = (encoding == 1 && text_len >= 2) ? 2 : 0; // skip BOM
+                int start = (encoding == 1 && text_len >= 2) ? 2 : 0;
                 for (int i = start; i < text_len - 1 && j < maxlen - 1; i += 2) {
-                    if (text[i+1] == 0 && text[i] >= 32) dest[j++] = text[i];
+                    // Handle both little-endian and big-endian UTF-16
+                    char c = (text[i+1] == 0) ? text[i] : ((text[i] == 0) ? text[i+1] : 0);
+                    if (c >= 32) dest[j++] = c;
                 }
                 dest[j] = '\0';
             }
         }
 
-        pos += 10 + frame_size;
+        pos += header_size + frame_size;
     }
 
     free(data);
