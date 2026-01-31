@@ -627,15 +627,15 @@ void update_variables(void) {
     var.key = "media_tim_y"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.tim_y = atoi(var.value); else cfg.tim_y = 190;
     var.key = "media_ico_y"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.ico_y = atoi(var.value); else cfg.ico_y = 20;
 
-    var.key = "media_viz_bands"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.viz_bands = atoi(var.value); else cfg.viz_bands = 20;
+    var.key = "media_viz_bands"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.viz_bands = atoi(var.value); else cfg.viz_bands = 40;
     var.key = "media_viz_mode"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) {
-        if (!strcmp(var.value, "VU Meter")) cfg.viz_mode = 3;
-        else if (!strcmp(var.value, "Bars")) cfg.viz_mode = 0;
+        if (!strcmp(var.value, "Bars")) cfg.viz_mode = 0;
+        else if (!strcmp(var.value, "VU Meter")) cfg.viz_mode = 3;
         else if (!strcmp(var.value, "Dots")) cfg.viz_mode = 1;
         else if (!strcmp(var.value, "Line")) cfg.viz_mode = 2;
-    } else cfg.viz_mode = 3;
+    } else cfg.viz_mode = 0;
     var.key = "media_viz_gradient"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.viz_gradient = !strcmp(var.value, "On"); else cfg.viz_gradient = true;
-    var.key = "media_viz_peak_hold"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.viz_peak_hold = atoi(var.value); else cfg.viz_peak_hold = 15;
+    var.key = "media_viz_peak_hold"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.viz_peak_hold = atoi(var.value); else cfg.viz_peak_hold = 30;
 }
 
 void retro_set_environment(retro_environment_t cb) {
@@ -650,10 +650,10 @@ void retro_set_environment(retro_environment_t cb) {
         { "media_viz_y", "Viz Y; 140|80|200" }, { "media_bar_y", "Bar Y; 180|100|210" },
         { "media_tim_y", "Time Y; 190|110|220" }, { "media_ico_y", "Icon Y; 20|50|200" },
         { "media_lcd", "LCD Effect; On|Off" },
-        { "media_viz_bands", "Viz Bands; 20|40" },
-        { "media_viz_mode", "Viz Mode; VU Meter|Bars|Dots|Line" },
+        { "media_viz_bands", "Viz Bands; 40|20" },
+        { "media_viz_mode", "Viz Mode; Bars|VU Meter|Dots|Line" },
         { "media_viz_gradient", "Viz Gradient; On|Off" },
-        { "media_viz_peak_hold", "Peak Hold; 15|0|30|45|60" },
+        { "media_viz_peak_hold", "Peak Hold; 30|0|15|45|60" },
         { NULL, NULL }
     };
     cb(RETRO_ENVIRONMENT_SET_VARIABLES, (void*)vars);
