@@ -2,7 +2,7 @@ name: Build & Release
 
 on:
   push:
-    paths: ['music_core.c']
+    paths: ['src/**']
   pull_request:
   workflow_dispatch:
 
@@ -46,7 +46,9 @@ jobs:
 
       - name: Build DLL
         run: |
-          gcc -shared -O2 -I./deps -o UltiMedia_UGC_libretro.dll music_core.c -lm
+          gcc -shared -O2 -I./deps -I./src -o UltiMedia_UGC_libretro.dll \
+            src/core.c src/audio.c src/video.c src/visualizer.c \
+            src/metadata.c src/config.c -lm
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
