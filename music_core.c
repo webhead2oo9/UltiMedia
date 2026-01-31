@@ -18,6 +18,8 @@
 #include "stb_vorbis.c"
 #define OUT_RATE 48000
 #define SAMPLES_PER_FRAME 800 
+#define MAX_CHANNELS 8
+#define RESAMPLE_CACHE_FRAMES 8
 
 
 // Prototypes
@@ -37,6 +39,14 @@ static int strcasecmp_simple(const char *s1, const char *s2) {
     }
     return *s1 - *s2;
 }
+
+static int is_absolute_path(const char *p) {
+    if (!p || !p[0]) return 0;
+    if (p[0] == '/' || p[0] == '\\') return 1;
+    if (((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z')) && p[1] == ':')
+        return 1;
+    return 0;
+}
 static retro_environment_t environ_cb;
 static retro_video_refresh_t video_cb;
 static retro_audio_sample_batch_t audio_batch_cb;
@@ -50,6 +60,7 @@ static char *tracks[256];
 static int track_count = 0, current_idx = 0;
 static int cur_track = 0;
 static uint32_t source_rate = 44100;
+static int source_channels = 2;
 static double resample_phase = 0.0;
 static char m3u_base_path[1024] = {0};
 static uint16_t *framebuffer = NULL;
@@ -66,7 +77,93 @@ static char display_str[256], time_str[32];
 static uint64_t total_frames = 0, cur_frame = 0;
 static int ff_rw_icon_timer = 0, ff_rw_dir = 0;
 // High-performance static buffer for resampling
-static int16_t resample_in_buf[SAMPLES_PER_FRAME * 8]; 
+static int16_t resample_in_buf[SAMPLES_PER_FRAME * 8 * MAX_CHANNELS]; 
+static int16_t resample_cache[RESAMPLE_CACHE_FRAMES * MAX_CHANNELS];
+static int resample_cache_frames = 0;
+
+static int16_t clamp_i16(float v) {
+    if (v > 32767.0f) return 32767;
+    if (v < -32768.0f) return -32768;
+    return (int16_t)v;
+}
+
+static void downmix_frame_lr(const int16_t *buf, int channels, int frame, float *l, float *r, bool vorbis_order) {
+    if (channels <= 1) {
+        int16_t s = buf[frame * ((channels > 0) ? channels : 1)];
+        *l = (float)s;
+        *r = (float)s;
+        return;
+    }
+    if (channels == 2) {
+        int idx = frame * 2;
+        *l = (float)buf[idx];
+        *r = (float)buf[idx + 1];
+        return;
+    }
+
+    int idx = frame * channels;
+    if (channels == 3) {
+        float fl = (float)buf[idx];
+        float fr = (float)buf[idx + 1];
+        float fc = (float)buf[idx + 2];
+        if (vorbis_order) {
+            fc = (float)buf[idx + 1];
+            fr = (float)buf[idx + 2];
+        }
+        *l = fl + 0.707f * fc;
+        *r = fr + 0.707f * fc;
+        return;
+    }
+    if (channels == 4) {
+        float fl = (float)buf[idx];
+        float fr = (float)buf[idx + 1];
+        float fsl = (float)buf[idx + 2];
+        float fsr = (float)buf[idx + 3];
+        *l = fl + 0.707f * fsl;
+        *r = fr + 0.707f * fsr;
+        return;
+    }
+    if (channels == 5) {
+        float fl = (float)buf[idx];
+        float fr = (float)buf[idx + 1];
+        float fc = (float)buf[idx + 2];
+        float fsl = (float)buf[idx + 3];
+        float fsr = (float)buf[idx + 4];
+        if (vorbis_order) {
+            fc = (float)buf[idx + 1];
+            fr = (float)buf[idx + 2];
+            fsl = (float)buf[idx + 3];
+            fsr = (float)buf[idx + 4];
+        }
+        *l = fl + 0.707f * fc + 0.707f * fsl;
+        *r = fr + 0.707f * fc + 0.707f * fsr;
+        return;
+    }
+    if (channels == 6) {
+        float fl = (float)buf[idx];
+        float fr = (float)buf[idx + 1];
+        float fc = (float)buf[idx + 2];
+        float flfe = (float)buf[idx + 3];
+        float fsl = (float)buf[idx + 4];
+        float fsr = (float)buf[idx + 5];
+        if (vorbis_order) {
+            fc = (float)buf[idx + 1];
+            fr = (float)buf[idx + 2];
+            fsl = (float)buf[idx + 3];
+            fsr = (float)buf[idx + 4];
+            flfe = (float)buf[idx + 5];
+        }
+        *l = fl + 0.707f * fc + 0.707f * fsl + 0.5f * flfe;
+        *r = fr + 0.707f * fc + 0.707f * fsr + 0.5f * flfe;
+        return;
+    }
+
+    int32_t sum = 0;
+    for (int c = 0; c < channels; c++) sum += buf[idx + c];
+    float mono = (float)sum / (float)channels;
+    *l = mono;
+    *r = mono;
+}
 
 struct {
     uint16_t bg_rgb, fg_rgb;
@@ -166,6 +263,7 @@ static int parse_id3v2(const char* path, char* artist, char* title, char* album,
     // 4. Skip extended header if present
     size_t pos = 0;
     if (flags & 0x40) {  // Extended header flag
+        if (bytes_read < 4) { free(data); return 0; }
         uint32_t ext_size;
         if (version == 4) {
             // ID3v2.4: syncsafe size
@@ -176,6 +274,7 @@ static int parse_id3v2(const char* path, char* artist, char* title, char* album,
             ext_size = ((uint32_t)data[0] << 24) | ((uint32_t)data[1] << 16) |
                        ((uint32_t)data[2] << 8) | data[3];
         }
+        if (ext_size > bytes_read) { free(data); return 0; }
         pos = ext_size;
     }
 
@@ -209,7 +308,7 @@ static int parse_id3v2(const char* path, char* artist, char* title, char* album,
             header_size = 10;
         }
 
-        if (frame_size == 0 || pos + header_size + frame_size > bytes_read) break;
+        if (frame_size == 0 || frame_size > bytes_read - pos - header_size) break;
 
         unsigned char* content = &data[pos + header_size];
         uint8_t encoding = content[0];
@@ -277,6 +376,7 @@ void open_track(int idx) {
         decoder = malloc(sizeof(drmp3));
         if (decoder && drmp3_init_file((drmp3*)decoder, p, NULL)) {
             current_type = MP3; source_rate = ((drmp3*)decoder)->sampleRate;
+            source_channels = ((drmp3*)decoder)->channels;
             total_frames = ((drmp3*)decoder)->totalPCMFrameCount; load_success = true;
         }
     } else if (ext && strcasecmp_simple(ext, ".ogg") == 0) {
@@ -284,18 +384,21 @@ void open_track(int idx) {
         if (ogg) {
             current_type = OGG; decoder = ogg; load_success = true;
             stb_vorbis_info info = stb_vorbis_get_info(ogg);
-            source_rate = info.sample_rate; total_frames = stb_vorbis_stream_length_in_samples(ogg);
+            source_rate = info.sample_rate; source_channels = info.channels;
+            total_frames = stb_vorbis_stream_length_in_samples(ogg);
         }
     } else if (ext && strcasecmp_simple(ext, ".flac") == 0) {
         drflac* flac = drflac_open_file(p, NULL);
         if (flac) {
             current_type = FLAC; decoder = flac; load_success = true;
-            source_rate = flac->sampleRate; total_frames = flac->totalPCMFrameCount;
+            source_rate = flac->sampleRate; source_channels = flac->channels;
+            total_frames = flac->totalPCMFrameCount;
         }
     } else {
         decoder = malloc(sizeof(drwav));
         if (decoder && drwav_init_file((drwav*)decoder, p, NULL)) {
             current_type = WAV; source_rate = ((drwav*)decoder)->sampleRate;
+            source_channels = ((drwav*)decoder)->channels;
             total_frames = ((drwav*)decoder)->totalPCMFrameCount; load_success = true;
         }
     }
@@ -306,7 +409,20 @@ void open_track(int idx) {
         snprintf(display_str, sizeof(display_str), "ERROR LOADING: %.230s", p); // Show error on screen
         return;
     }
-resample_phase = 0.0;
+    if (source_channels <= 0) source_channels = 2;
+    if (source_channels > MAX_CHANNELS) {
+        if (current_type == MP3) drmp3_uninit((drmp3*)decoder);
+        else if (current_type == WAV) drwav_uninit((drwav*)decoder);
+        else if (current_type == FLAC) drflac_close((drflac*)decoder);
+        else if (current_type == OGG) stb_vorbis_close((stb_vorbis*)decoder);
+        if (current_type != OGG && current_type != FLAC) free(decoder);
+        decoder = NULL;
+        current_type = NONE;
+        snprintf(display_str, sizeof(display_str), "UNSUPPORTED CHANNELS: %d", source_channels);
+        return;
+    }
+    resample_phase = 0.0;
+    resample_cache_frames = 0;
 
     // 6. Reset Playback State
     cur_frame = 0;
@@ -367,20 +483,26 @@ resample_phase = 0.0;
     // B. Main Search Loop
     for (int i = 0; i < 4 && !img_data; i++) {
         // 1. Same name as MP3 (e.g., C:/Music/Song.jpg)
-        strcpy(path_buf, p); char* dot = strrchr(path_buf, '.');
-        if (dot) strcpy(dot, exts[i]); else strcat(path_buf, exts[i]);
+        const char* dot = strrchr(p, '.');
+        if (dot) {
+            int base_len = (int)(dot - p);
+            if (base_len < 0) base_len = 0;
+            snprintf(path_buf, sizeof(path_buf), "%.*s%s", base_len, p, exts[i]);
+        } else {
+            snprintf(path_buf, sizeof(path_buf), "%s%s", p, exts[i]);
+        }
         img_data = stbi_load(path_buf, &art_w_src, &art_h_src, NULL, 3);
         if (img_data) break;
 
         if (music_dir[0]) {
             // 2. Name of Parent Folder (e.g., C:/Music/AlbumName/AlbumName.jpg)
-            sprintf(path_buf, "%s/%s%s", music_dir, parent_name, exts[i]);
+            snprintf(path_buf, sizeof(path_buf), "%s/%s%s", music_dir, parent_name, exts[i]);
             img_data = stbi_load(path_buf, &art_w_src, &art_h_src, NULL, 3);
             if (img_data) break;
             
             // 3. Album Name from Metadata (e.g., C:/Music/AlbumName/MetadataAlbum.jpg)
             if (cur_album[0]) {
-                sprintf(path_buf, "%s/%s%s", music_dir, cur_album, exts[i]);
+                snprintf(path_buf, sizeof(path_buf), "%s/%s%s", music_dir, cur_album, exts[i]);
                 img_data = stbi_load(path_buf, &art_w_src, &art_h_src, NULL, 3);
                 if (img_data) break;
             }
@@ -388,9 +510,14 @@ resample_phase = 0.0;
 
         // 4. Same name as M3U file (e.g., if playlist is Playlist.m3u, looks for Playlist.jpg)
         if (m3u_base_path[0]) {
-            strcpy(path_buf, m3u_base_path);
-            char* m3u_dot = strrchr(path_buf, '.');
-            if (m3u_dot) strcpy(m3u_dot, exts[i]); else strcat(path_buf, exts[i]);
+            const char* m3u_dot = strrchr(m3u_base_path, '.');
+            if (m3u_dot) {
+                int base_len = (int)(m3u_dot - m3u_base_path);
+                if (base_len < 0) base_len = 0;
+                snprintf(path_buf, sizeof(path_buf), "%.*s%s", base_len, m3u_base_path, exts[i]);
+            } else {
+                snprintf(path_buf, sizeof(path_buf), "%s%s", m3u_base_path, exts[i]);
+            }
             img_data = stbi_load(path_buf, &art_w_src, &art_h_src, NULL, 3);
             if (img_data) break;
         }
@@ -449,13 +576,16 @@ void retro_run(void) {
     if (decoder && !is_paused) {
         int seek_speed = source_rate * 3;
         if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT)) {
-            cur_frame = (cur_frame + seek_speed >= total_frames) ? total_frames - 1 : cur_frame + seek_speed;
+            uint64_t next = cur_frame + (uint64_t)seek_speed;
+            if (next < cur_frame) next = cur_frame; // overflow guard
+            if (total_frames > 0 && next >= total_frames) next = total_frames - 1;
+            cur_frame = next;
             if (current_type == MP3) drmp3_seek_to_pcm_frame((drmp3*)decoder, cur_frame);
             else if (current_type == WAV) drwav_seek_to_pcm_frame((drwav*)decoder, cur_frame);
             else if (current_type == OGG) stb_vorbis_seek((stb_vorbis*)decoder, cur_frame);
             ff_rw_icon_timer = 15; ff_rw_dir = 1;
         } else if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT)) {
-            cur_frame = (cur_frame < (uint64_t)seek_speed) ? 0 : cur_frame - seek_speed;
+            cur_frame = (cur_frame < (uint64_t)seek_speed) ? 0 : cur_frame - (uint64_t)seek_speed;
             if (current_type == MP3) drmp3_seek_to_pcm_frame((drmp3*)decoder, cur_frame);
             else if (current_type == WAV) drwav_seek_to_pcm_frame((drwav*)decoder, cur_frame);
             else if (current_type == OGG) stb_vorbis_seek((stb_vorbis*)decoder, cur_frame);
@@ -476,30 +606,41 @@ int16_t out_buf[SAMPLES_PER_FRAME * 2] = {0};
 
 if (decoder && !is_paused) {
     double ratio = (double)source_rate / (double)OUT_RATE;
-    uint32_t needed = (uint32_t)(SAMPLES_PER_FRAME * ratio) + 2;
-    if (needed > SAMPLES_PER_FRAME * 8) needed = SAMPLES_PER_FRAME * 8;
+    double advance_d = resample_phase + (double)SAMPLES_PER_FRAME * ratio;
+    uint32_t advance_frames = (uint32_t)advance_d;
+    double new_phase = advance_d - (double)advance_frames;
 
-    memset(resample_in_buf, 0, sizeof(resample_in_buf));
+    double max_src_pos = resample_phase + (double)(SAMPLES_PER_FRAME - 1) * ratio;
+    uint32_t i2_max = (uint32_t)max_src_pos + 1;
+    uint32_t required_frames = i2_max + 1;
+    uint32_t frames_to_read = required_frames;
+    if (frames_to_read < advance_frames) frames_to_read = advance_frames;
+    if (frames_to_read > SAMPLES_PER_FRAME * 8) frames_to_read = SAMPLES_PER_FRAME * 8;
+
     uint64_t read = 0;
-    int channels = 2;
+    int channels = source_channels;
+
+    uint32_t cache_frames = (resample_cache_frames > (int)frames_to_read) ? frames_to_read : (uint32_t)resample_cache_frames;
+    if (cache_frames > 0) {
+        memcpy(resample_in_buf, resample_cache, cache_frames * (uint32_t)channels * sizeof(int16_t));
+    }
+    uint32_t need_read = (frames_to_read > cache_frames) ? (frames_to_read - cache_frames) : 0;
 
     if (current_type == MP3) {
-        read = drmp3_read_pcm_frames_s16((drmp3*)decoder, needed, resample_in_buf);
-        channels = ((drmp3*)decoder)->channels;
+        read = drmp3_read_pcm_frames_s16((drmp3*)decoder, need_read, resample_in_buf + cache_frames * channels);
     } else if (current_type == WAV) {
-        read = drwav_read_pcm_frames_s16((drwav*)decoder, needed, resample_in_buf);
-        channels = ((drwav*)decoder)->channels;
+        read = drwav_read_pcm_frames_s16((drwav*)decoder, need_read, resample_in_buf + cache_frames * channels);
     } else if (current_type == OGG) {
-        read = stb_vorbis_get_samples_short_interleaved((stb_vorbis*)decoder, 2, resample_in_buf, needed * 2);
-        channels = 2;
+        read = stb_vorbis_get_samples_short_interleaved((stb_vorbis*)decoder, channels, resample_in_buf + cache_frames * channels, need_read * channels);
     } else if (current_type == FLAC) {
-        read = drflac_read_pcm_frames_s16((drflac*)decoder, needed, resample_in_buf);
-        channels = ((drflac*)decoder)->channels;
+        read = drflac_read_pcm_frames_s16((drflac*)decoder, need_read, resample_in_buf + cache_frames * channels);
     }
 
-    if (read < 2 || (read < needed && cur_frame > 1000)) { 
+    uint32_t total_available = cache_frames + (uint32_t)read;
+    if (total_available < 2 || (read < need_read && cur_frame > 1000)) { 
         open_track(is_shuffle ? rand()%track_count : current_idx + 1); 
     } else {
+        bool vorbis_order = (current_type == OGG);
         for (int i = 0; i < SAMPLES_PER_FRAME; i++) {
             double src_pos = resample_phase + i * ratio;
             int i1 = (int)src_pos;
@@ -508,25 +649,33 @@ if (decoder && !is_paused) {
             // --- CLAMP INDICES ---
             if (i1 < 0) i1 = 0;
             if (i2 < 0) i2 = 0;
-            if (i1 >= (int)read) i1 = (int)read - 1;
-            if (i2 >= (int)read) i2 = i1;
+            if (i1 >= (int)total_available) i1 = (int)total_available - 1;
+            if (i2 >= (int)total_available) i2 = i1;
 
             float frac = (float)(src_pos - i1);
 
-            if (channels == 2) {
-                out_buf[i*2]   = (int16_t)((1.0f - frac) * resample_in_buf[i1*2]   + frac * resample_in_buf[i2*2]);
-                out_buf[i*2+1] = (int16_t)((1.0f - frac) * resample_in_buf[i1*2+1] + frac * resample_in_buf[i2*2+1]);
-            } else {
-                int16_t s = (int16_t)((1.0f - frac) * resample_in_buf[i1] + frac * resample_in_buf[i2]);
-                out_buf[i*2] = out_buf[i*2+1] = s;
-            }
+            float l1, r1, l2, r2;
+            downmix_frame_lr(resample_in_buf, channels, i1, &l1, &r1, vorbis_order);
+            downmix_frame_lr(resample_in_buf, channels, i2, &l2, &r2, vorbis_order);
+            float out_l = (1.0f - frac) * l1 + frac * l2;
+            float out_r = (1.0f - frac) * r1 + frac * r2;
+            out_buf[i*2]   = clamp_i16(out_l);
+            out_buf[i*2+1] = clamp_i16(out_r);
         }
 
         // --- WRAP PHASE INSTEAD OF GROWING FOREVER ---
-        resample_phase += SAMPLES_PER_FRAME * ratio;
-        resample_phase -= (int)resample_phase;  // Keep fractional remainder only
+        resample_phase = new_phase;  // Keep fractional remainder only
+        cur_frame += (uint64_t)advance_frames;
 
-        cur_frame += (uint64_t)(SAMPLES_PER_FRAME * ratio);
+        int overshoot = (int)total_available - (int)advance_frames;
+        if (overshoot < 0) overshoot = 0;
+        if (overshoot > RESAMPLE_CACHE_FRAMES) overshoot = RESAMPLE_CACHE_FRAMES;
+        resample_cache_frames = overshoot;
+        if (overshoot > 0) {
+            memcpy(resample_cache,
+                   resample_in_buf + (total_available - (uint32_t)overshoot) * (uint32_t)channels,
+                   (uint32_t)overshoot * (uint32_t)channels * sizeof(int16_t));
+        }
     }
 }
 
@@ -797,6 +946,8 @@ bool retro_load_game(const struct retro_game_info *g) {
    
     
     track_count = 0;
+    m3u_base_path[0] = '\0';
+    char m3u_dir[1024] = {0};
 
     // 2. Check for M3U extension
     const char* ext = strrchr(g->path, '.');
@@ -812,8 +963,19 @@ bool retro_load_game(const struct retro_game_info *g) {
             fprintf(stderr, "[MusicCore] Failed to open M3U at %s\n", g->path);
             return false;
         }
- strncpy(m3u_base_path, g->path, 1023);
+        strncpy(m3u_base_path, g->path, 1023);
         m3u_base_path[sizeof(m3u_base_path) - 1] = '\0';
+        const char* last = strrchr(g->path, '/');
+        if (!last) last = strrchr(g->path, '\\');
+        if (last) {
+            size_t dir_len = (size_t)(last - g->path);
+            if (dir_len >= sizeof(m3u_dir)) dir_len = sizeof(m3u_dir) - 1;
+            memcpy(m3u_dir, g->path, dir_len);
+            m3u_dir[dir_len] = '\0';
+        } else {
+            strncpy(m3u_dir, ".", sizeof(m3u_dir) - 1);
+            m3u_dir[sizeof(m3u_dir) - 1] = '\0';
+        }
         char line[1024];
         while (fgets(line, sizeof(line), f) && track_count < 256) {
             // Clean the line aggressively
@@ -834,8 +996,18 @@ bool retro_load_game(const struct retro_game_info *g) {
             for (int i = 0; trimmed[i]; i++) {
                 if (trimmed[i] == '\\') trimmed[i] = '/';
             }
-
-            tracks[track_count++] = strdup(trimmed);
+            char resolved[1024];
+            int written = 0;
+            if (is_absolute_path(trimmed) || !m3u_dir[0]) {
+                written = snprintf(resolved, sizeof(resolved), "%s", trimmed);
+            } else {
+                written = snprintf(resolved, sizeof(resolved), "%s/%s", m3u_dir, trimmed);
+            }
+            if (written <= 0 || written >= (int)sizeof(resolved)) continue;
+            for (int i = 0; resolved[i]; i++) {
+                if (resolved[i] == '\\') resolved[i] = '/';
+            }
+            tracks[track_count++] = strdup(resolved);
         }
         fclose(f);
     } else {
