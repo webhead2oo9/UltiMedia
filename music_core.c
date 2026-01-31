@@ -568,7 +568,7 @@ if (decoder && !is_paused) {
         int band_count = cfg.viz_bands;
 
         if (cfg.viz_mode == 0) {  // Bars mode
-            int start_x = (band_count == 40) ? 60 : 100;
+            int start_x = (band_count == 40) ? 80 : 100;
             int bar_width = (band_count == 40) ? 2 : 4;
             int spacing = (band_count == 40) ? 4 : 6;
 
@@ -616,7 +616,7 @@ if (decoder && !is_paused) {
                 }
             }
         } else if (cfg.viz_mode == 2) {  // Line Graph mode
-            int start_x = (band_count == 40) ? 60 : 100;
+            int start_x = (band_count == 40) ? 80 : 100;
             int spacing = (band_count == 40) ? 4 : 6;
 
             for (int i = 0; i < band_count; i++) {
