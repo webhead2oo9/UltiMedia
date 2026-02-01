@@ -32,7 +32,7 @@ jobs:
         run: |
           mkdir -p deps
           [ -f deps/libretro.h ] || curl -sL -o deps/libretro.h \
-            https://raw.githubusercontent.com/libretro/libretro-common/master/include/libretro.h
+            https://raw.githubusercontent.com/libretro/RetroArch/v1.7.5/libretro-common/include/libretro.h
           [ -f deps/dr_mp3.h ] || curl -sL -o deps/dr_mp3.h \
             https://raw.githubusercontent.com/mackron/dr_libs/master/dr_mp3.h
           [ -f deps/dr_wav.h ] || curl -sL -o deps/dr_wav.h \
@@ -46,15 +46,15 @@ jobs:
 
       - name: Build DLL
         run: |
-          gcc -shared -O2 -I./deps -I./src -o UltiMedia_UGC_libretro.dll \
+          gcc -shared -O2 -I./deps -I./src -o music_playlist_libretro.dll \
             src/core.c src/audio.c src/video.c src/visualizer.c \
             src/metadata.c src/config.c -lm
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: UltiMedia_UGC_libretro
-          path: UltiMedia_UGC_libretro.dll
+          name: music_playlist_libretro
+          path: music_playlist_libretro.dll
 
   release:
     needs: build
@@ -71,7 +71,7 @@ jobs:
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: UltiMedia_UGC_libretro
+          name: music_playlist_libretro
 
       - name: Get short SHA
         id: sha
@@ -83,5 +83,5 @@ jobs:
           tag_name: ${{ steps.sha.outputs.short }}
           name: Build ${{ steps.sha.outputs.short }}
           generate_release_notes: true
-          files: UltiMedia_UGC_libretro.dll
+          files: music_playlist_libretro.dll
           make_latest: true
