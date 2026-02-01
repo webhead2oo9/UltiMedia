@@ -1,5 +1,6 @@
 #include "video.h"
 #include "font.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -7,9 +8,11 @@ uint16_t *framebuffer = NULL;
 
 void video_init(void) {
     framebuffer = malloc(FB_WIDTH * FB_HEIGHT * sizeof(uint16_t));
-    if (framebuffer) {
-        memset(framebuffer, 0, FB_WIDTH * FB_HEIGHT * sizeof(uint16_t));
+    if (!framebuffer) {
+        fprintf(stderr, "[MusicCore] Failed to allocate framebuffer\n");
+        return;
     }
+    memset(framebuffer, 0, FB_WIDTH * FB_HEIGHT * sizeof(uint16_t));
 }
 
 void video_deinit(void) {
@@ -18,12 +21,14 @@ void video_deinit(void) {
 }
 
 void video_clear(uint16_t bg_color) {
+    if (!framebuffer) return;
     for (int i = 0; i < FB_WIDTH * FB_HEIGHT; i++) {
         framebuffer[i] = bg_color;
     }
 }
 
 void video_apply_lcd_effect(void) {
+    if (!framebuffer) return;
     for (int y = 0; y < FB_HEIGHT; y += 2) {
         for (int x = 0; x < FB_WIDTH; x++) {
             framebuffer[y * FB_WIDTH + x] = (framebuffer[y * FB_WIDTH + x] >> 1) & 0x7BEF;

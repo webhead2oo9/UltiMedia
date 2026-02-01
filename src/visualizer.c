@@ -30,7 +30,9 @@ void viz_update_levels(const int16_t *audio_buf, int samples_per_frame) {
     int band_count = cfg.viz_bands;
 
     for (int i = 0; i < band_count; i++) {
-        float p = abs(audio_buf[i * sample_stride]) / 32768.0f;
+        // Manual abs to avoid undefined behavior with INT16_MIN (-32768)
+        int32_t sample = audio_buf[i * sample_stride];
+        float p = (sample < 0 ? -sample : sample) / 32768.0f;
 
         // Update current level with decay
         if (p > viz_levels[i]) viz_levels[i] = p;
@@ -139,8 +141,9 @@ static void draw_vu_meter_mode(const int16_t *audio_buf, int samples_per_frame) 
     // Calculate L/R levels from stereo mix
     float left_level = 0, right_level = 0;
     for (int i = 0; i < samples_per_frame; i += 8) {
-        float l = abs(audio_buf[i*2]) / 32768.0f;
-        float r = abs(audio_buf[i*2+1]) / 32768.0f;
+        int32_t ls = audio_buf[i*2], rs = audio_buf[i*2+1];
+        float l = (ls < 0 ? -ls : ls) / 32768.0f;
+        float r = (rs < 0 ? -rs : rs) / 32768.0f;
         if (l > left_level) left_level = l;
         if (r > right_level) right_level = r;
     }

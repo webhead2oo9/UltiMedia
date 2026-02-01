@@ -50,7 +50,7 @@ int parse_id3v2(const char* path, char* artist, char* title, char* album, int ma
             ext_size = ((uint32_t)data[0] << 24) | ((uint32_t)data[1] << 16) |
                        ((uint32_t)data[2] << 8) | data[3];
         }
-        if (ext_size > bytes_read) { free(data); return 0; }
+        if (ext_size >= bytes_read) { free(data); return 0; }  // >= rejects malformed headers
         pos = ext_size;
     }
 
@@ -245,8 +245,7 @@ void metadata_load(const char *track_path, const char *m3u_base_path, int use_fi
             if (head) {
                 size_t bytes_read = fread(head, 1, scan_size, f_art);
 
-                // First: Look for 'APIC' or 'PIC' (ID3v2 Picture Frames)
-                // If we find the frame, we know an image is nearby.
+                // Scan for embedded JPEG/PNG by magic bytes
                 for (size_t i = 0; i + 10 < bytes_read; i++) {
                     // Check for JPEG (FF D8 FF)
                     if (head[i] == 0xFF && head[i+1] == 0xD8 && head[i+2] == 0xFF) {

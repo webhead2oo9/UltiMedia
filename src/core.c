@@ -193,7 +193,7 @@ void retro_run(void) {
     else {
         if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y)) { is_shuffle = !is_shuffle; debounce = 20; }
         if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START)) { is_paused = !is_paused; debounce = 20; }
-        if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R)) { open_track(is_shuffle ? rand()%track_count : current_idx + 1); debounce = 20; }
+        if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R)) { open_track(is_shuffle && track_count > 0 ? rand()%track_count : current_idx + 1); debounce = 20; }
         if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L)) { open_track(current_idx - 1); debounce = 20; }
     }
 
@@ -204,7 +204,7 @@ void retro_run(void) {
         int samples = audio_read_frame(out_buf);
         if (samples == 0) {
             // End of track, go to next
-            open_track(is_shuffle ? rand()%track_count : current_idx + 1);
+            open_track(is_shuffle && track_count > 0 ? rand()%track_count : current_idx + 1);
         }
     }
 
@@ -266,6 +266,13 @@ void retro_set_environment(retro_environment_t cb) {
 bool retro_load_game(const struct retro_game_info *g) {
     if (!g || !g->path) return false;
 
+    // Free existing tracks before loading new ones
+    for (int i = 0; i < track_count; i++) {
+        if (tracks[i]) {
+            free(tracks[i]);
+            tracks[i] = NULL;
+        }
+    }
     track_count = 0;
     m3u_base_path[0] = '\0';
     char m3u_dir[1024] = {0};
