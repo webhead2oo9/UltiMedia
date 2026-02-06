@@ -1,6 +1,7 @@
 #include "visualizer.h"
 #include "video.h"
 #include "config.h"
+#include "layout.h"
 #include <stdlib.h>
 
 float viz_levels[MAX_VIZ_BANDS] = {0};
@@ -51,88 +52,156 @@ void viz_update_levels(const int16_t *audio_buf, int samples_per_frame) {
 }
 
 static void draw_bars_mode(int band_count) {
-    int start_x = (band_count == 40) ? 80 : 100;
-    int bar_width = (band_count == 40) ? 2 : 4;
-    int spacing = (band_count == 40) ? 4 : 6;
+    int start_x;
+    int bar_width;
+    int spacing;
+    int max_h;
+    int base_y;
+
+    if (cfg.responsive) {
+        start_x = layout.viz_start_x;
+        bar_width = layout.viz_bar_width;
+        spacing = layout.viz_spacing;
+        max_h = layout.viz_max_h;
+        base_y = layout.viz.y + layout.viz.h - 1;
+    } else {
+        start_x = (band_count == 40) ? 80 : 100;
+        bar_width = (band_count == 40) ? 2 : 4;
+        spacing = (band_count == 40) ? 4 : 6;
+        max_h = 35;
+        base_y = cfg.viz_y;
+    }
+    if (max_h < 1) max_h = 1;
 
     for (int i = 0; i < band_count; i++) {
-        int h = (int)(viz_levels[i] * 35);
+        int h = (int)(viz_levels[i] * max_h);
+        if (h > max_h) h = max_h;
         int x_base = start_x + (i * spacing);
 
         // Draw main bar
         for (int v = 0; v < h; v++) {
-            uint16_t color = cfg.viz_gradient ? get_gradient_color((float)v / 35.0f) : cfg.fg_rgb;
-            for (int w = 0; w < bar_width; w++) draw_pixel(x_base + w, cfg.viz_y - v, color);
+            uint16_t color = cfg.viz_gradient ? get_gradient_color((float)v / (float)max_h) : cfg.fg_rgb;
+            for (int w = 0; w < bar_width; w++) draw_pixel(x_base + w, base_y - v, color);
         }
 
         // Draw peak hold dot
         if (cfg.viz_peak_hold > 0 && viz_peak_timers[i] > 0) {
-            int peak_h = (int)(viz_peaks[i] * 35);
+            int peak_h = (int)(viz_peaks[i] * max_h);
+            if (peak_h >= max_h) peak_h = max_h - 1;
             uint16_t peak_color = cfg.viz_gradient ? 0xF800 : cfg.fg_rgb;
             for (int w = 0; w < bar_width; w++) {
-                draw_pixel(x_base + w, cfg.viz_y - peak_h, peak_color);
-                if (peak_h + 1 < 35) draw_pixel(x_base + w, cfg.viz_y - peak_h - 1, peak_color);
+                draw_pixel(x_base + w, base_y - peak_h, peak_color);
+                if (peak_h + 1 < max_h) draw_pixel(x_base + w, base_y - peak_h - 1, peak_color);
             }
         }
     }
 }
 
 static void draw_dots_mode(int band_count) {
-    int start_x = (band_count == 40) ? 100 : 130;
-    int spacing = (band_count == 40) ? 3 : 4;
+    int start_x;
+    int spacing;
+    int max_h;
+    int base_y;
+
+    if (cfg.responsive) {
+        start_x = layout.viz_start_x;
+        spacing = layout.viz_spacing;
+        max_h = layout.viz_max_h;
+        base_y = layout.viz.y + layout.viz.h - 1;
+        if (spacing < 2) spacing = 2;
+
+        // Keep 2x2 dots inside the responsive visualizer bounds.
+        if (band_count > 1) {
+            int dots_w = spacing * (band_count - 1) + 2;
+            if (dots_w > layout.viz.w) {
+                spacing = (layout.viz.w - 2) / (band_count - 1);
+                if (spacing < 1) spacing = 1;
+                dots_w = spacing * (band_count - 1) + 2;
+            }
+            start_x = layout.viz.x + (layout.viz.w - dots_w) / 2;
+        } else {
+            start_x = layout.viz.x + (layout.viz.w - 2) / 2;
+        }
+    } else {
+        start_x = (band_count == 40) ? 100 : 130;
+        spacing = (band_count == 40) ? 3 : 4;
+        max_h = 50;
+        base_y = cfg.viz_y;
+    }
+    if (max_h < 1) max_h = 1;
 
     for (int i = 0; i < band_count; i++) {
-        int h = (int)(viz_levels[i] * 50);
+        int h = (int)(viz_levels[i] * max_h);
+        if (h >= max_h) h = max_h - 1;
         int x = start_x + (i * spacing);
         uint16_t color = cfg.viz_gradient ? get_gradient_color(viz_levels[i]) : cfg.fg_rgb;
 
         // Draw 2x2 dot
-        draw_pixel(x, cfg.viz_y - h, color);
-        draw_pixel(x + 1, cfg.viz_y - h, color);
-        draw_pixel(x, cfg.viz_y - h - 1, color);
-        draw_pixel(x + 1, cfg.viz_y - h - 1, color);
+        draw_pixel(x, base_y - h, color);
+        draw_pixel(x + 1, base_y - h, color);
+        draw_pixel(x, base_y - h - 1, color);
+        draw_pixel(x + 1, base_y - h - 1, color);
 
         // Peak dot
         if (cfg.viz_peak_hold > 0 && viz_peak_timers[i] > 0) {
-            int peak_h = (int)(viz_peaks[i] * 50);
+            int peak_h = (int)(viz_peaks[i] * max_h);
+            if (peak_h >= max_h) peak_h = max_h - 1;
             uint16_t peak_color = cfg.viz_gradient ? 0xF800 : cfg.fg_rgb;
-            draw_pixel(x, cfg.viz_y - peak_h, peak_color);
-            draw_pixel(x + 1, cfg.viz_y - peak_h, peak_color);
+            draw_pixel(x, base_y - peak_h, peak_color);
+            draw_pixel(x + 1, base_y - peak_h, peak_color);
         }
     }
 }
 
 static void draw_line_mode(int band_count) {
-    int start_x = (band_count == 40) ? 80 : 100;
-    int spacing = (band_count == 40) ? 4 : 6;
+    int start_x;
+    int spacing;
+    int max_h;
+    int base_y;
+
+    if (cfg.responsive) {
+        start_x = layout.viz_start_x;
+        spacing = layout.viz_spacing;
+        max_h = layout.viz_max_h;
+        base_y = layout.viz.y + layout.viz.h - 1;
+    } else {
+        start_x = (band_count == 40) ? 80 : 100;
+        spacing = (band_count == 40) ? 4 : 6;
+        max_h = 40;
+        base_y = cfg.viz_y;
+    }
+    if (max_h < 1) max_h = 1;
 
     for (int i = 0; i < band_count; i++) {
-        int h = (int)(viz_levels[i] * 40);
+        int h = (int)(viz_levels[i] * max_h);
+        if (h >= max_h) h = max_h - 1;
         int x = start_x + (i * spacing);
         uint16_t color = cfg.viz_gradient ? get_gradient_color(viz_levels[i]) : cfg.fg_rgb;
 
         // Draw vertical line
-        for (int v = 0; v <= h; v++) draw_pixel(x, cfg.viz_y - v, color);
+        for (int v = 0; v <= h; v++) draw_pixel(x, base_y - v, color);
 
         // Connect to next band
         if (i < band_count - 1) {
-            int next_h = (int)(viz_levels[i + 1] * 40);
+            int next_h = (int)(viz_levels[i + 1] * max_h);
+            if (next_h >= max_h) next_h = max_h - 1;
             int next_x = start_x + ((i + 1) * spacing);
             int dx = next_x - x;
             int dy = next_h - h;
 
             for (int step = 0; step < dx; step++) {
                 int interp_y = h + (dy * step) / dx;
-                uint16_t interp_color = cfg.viz_gradient ? get_gradient_color((float)interp_y / 40.0f) : cfg.fg_rgb;
-                draw_pixel(x + step, cfg.viz_y - interp_y, interp_color);
+                uint16_t interp_color = cfg.viz_gradient ? get_gradient_color((float)interp_y / (float)max_h) : cfg.fg_rgb;
+                draw_pixel(x + step, base_y - interp_y, interp_color);
             }
         }
 
         // Peak markers
         if (cfg.viz_peak_hold > 0 && viz_peak_timers[i] > 0) {
-            int peak_h = (int)(viz_peaks[i] * 40);
-            draw_pixel(x, cfg.viz_y - peak_h, 0xF800);
-            draw_pixel(x + 1, cfg.viz_y - peak_h, 0xF800);
+            int peak_h = (int)(viz_peaks[i] * max_h);
+            if (peak_h >= max_h) peak_h = max_h - 1;
+            draw_pixel(x, base_y - peak_h, 0xF800);
+            draw_pixel(x + 1, base_y - peak_h, 0xF800);
         }
     }
 }
@@ -168,28 +237,56 @@ static void draw_vu_meter_mode(const int16_t *audio_buf, int samples_per_frame) 
         viz_peak_timers[1]--;
     }
 
-    // Draw Left meter
-    draw_text(80, cfg.viz_y - 15, "L", cfg.fg_rgb);
-    int left_w = (int)(viz_levels[0] * 180);
-    for (int x = 0; x < left_w; x++) {
-        uint16_t color = cfg.viz_gradient ? get_gradient_color((float)x / 180.0f) : cfg.fg_rgb;
-        for (int y = 0; y < 4; y++) draw_pixel(95 + x, cfg.viz_y - 15 + y, color);
-    }
-    if (cfg.viz_peak_hold > 0 && viz_peak_timers[0] > 0) {
-        int peak_x = (int)(viz_peaks[0] * 180);
-        for (int y = 0; y < 4; y++) draw_pixel(95 + peak_x, cfg.viz_y - 15 + y, 0xF800);
+    int label_x = 80;
+    int meter_x = 95;
+    int meter_w = 180;
+    int left_y = cfg.viz_y - 15;
+    int right_y = cfg.viz_y - 5;
+
+    if (cfg.responsive) {
+        meter_w = layout.viz_meter_w;
+        if (meter_w < 1) meter_w = 1;
+        meter_x = layout.viz.x + (layout.viz.w - meter_w);
+        label_x = layout.viz.x;
+
+        if (layout.viz.h >= 10) {
+            left_y = layout.viz.y;
+            right_y = layout.viz.y + layout.viz.h - 4;
+        } else {
+            // Too short for two meters, show only left as a mono meter
+            left_y = layout.viz.y;
+            right_y = -1;
+        }
     }
 
-    // Draw Right meter
-    draw_text(80, cfg.viz_y - 5, "R", cfg.fg_rgb);
-    int right_w = (int)(viz_levels[1] * 180);
-    for (int x = 0; x < right_w; x++) {
-        uint16_t color = cfg.viz_gradient ? get_gradient_color((float)x / 180.0f) : cfg.fg_rgb;
-        for (int y = 0; y < 4; y++) draw_pixel(95 + x, cfg.viz_y - 5 + y, color);
+    // Draw Left meter
+    draw_text(label_x, left_y, "L", cfg.fg_rgb);
+    int left_w = (int)(viz_levels[0] * meter_w);
+    if (left_w > meter_w) left_w = meter_w;
+    for (int x = 0; x < left_w; x++) {
+        uint16_t color = cfg.viz_gradient ? get_gradient_color((float)x / (float)meter_w) : cfg.fg_rgb;
+        for (int y = 0; y < 4; y++) draw_pixel(meter_x + x, left_y + y, color);
     }
-    if (cfg.viz_peak_hold > 0 && viz_peak_timers[1] > 0) {
-        int peak_x = (int)(viz_peaks[1] * 180);
-        for (int y = 0; y < 4; y++) draw_pixel(95 + peak_x, cfg.viz_y - 5 + y, 0xF800);
+    if (cfg.viz_peak_hold > 0 && viz_peak_timers[0] > 0) {
+        int peak_x = (int)(viz_peaks[0] * meter_w);
+        if (peak_x >= meter_w) peak_x = meter_w - 1;
+        for (int y = 0; y < 4; y++) draw_pixel(meter_x + peak_x, left_y + y, 0xF800);
+    }
+
+    // Draw Right meter (skip if too short for two meters)
+    if (right_y >= 0) {
+        draw_text(label_x, right_y, "R", cfg.fg_rgb);
+        int right_w = (int)(viz_levels[1] * meter_w);
+        if (right_w > meter_w) right_w = meter_w;
+        for (int x = 0; x < right_w; x++) {
+            uint16_t color = cfg.viz_gradient ? get_gradient_color((float)x / (float)meter_w) : cfg.fg_rgb;
+            for (int y = 0; y < 4; y++) draw_pixel(meter_x + x, right_y + y, color);
+        }
+        if (cfg.viz_peak_hold > 0 && viz_peak_timers[1] > 0) {
+            int peak_x = (int)(viz_peaks[1] * meter_w);
+            if (peak_x >= meter_w) peak_x = meter_w - 1;
+            for (int y = 0; y < 4; y++) draw_pixel(meter_x + peak_x, right_y + y, 0xF800);
+        }
     }
 }
 
@@ -204,6 +301,7 @@ void viz_set_audio_for_vu(const int16_t *audio_buf, int samples_per_frame) {
 
 void viz_draw(void) {
     int band_count = cfg.viz_bands;
+    if (cfg.responsive && (layout.viz.w <= 0 || layout.viz.h <= 0)) return;
 
     if (cfg.viz_mode == 0) {
         draw_bars_mode(band_count);

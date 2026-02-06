@@ -48,7 +48,7 @@ jobs:
         run: |
           gcc -shared -O2 -I./deps -I./src -o music_playlist_libretro.dll \
             src/core.c src/audio.c src/video.c src/visualizer.c \
-            src/metadata.c src/config.c -lm
+            src/metadata.c src/config.c src/layout.c -lm
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

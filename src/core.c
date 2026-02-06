@@ -10,6 +10,7 @@
 #include "libretro.h"
 
 #include "config.h"
+#include "layout.h"
 #include "video.h"
 #include "audio.h"
 #include "metadata.h"
@@ -163,14 +164,28 @@ static void open_track(int idx) {
 
     // Load metadata and album art
     metadata_load(p, m3u_base_path, cfg.use_filename);
-    scroll_x = 320;
+    scroll_x = cfg.responsive ? (layout.content_x + layout.content_w) : FB_WIDTH;
+}
+
+static void refresh_config_and_layout(void) {
+    config_update(environ_cb);
+    if (cfg.responsive)
+        layout_compute();
 }
 
 // External declaration for viz_set_audio_for_vu
 void viz_set_audio_for_vu(const int16_t *audio_buf, int samples_per_frame);
 
 void retro_run(void) {
-    config_update(environ_cb);
+    static bool first_run = true;
+    if (first_run) {
+        refresh_config_and_layout();
+        first_run = false;
+    } else {
+        bool updated = false;
+        if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated)
+            refresh_config_and_layout();
+    }
     input_poll_cb();
 
     // 1. Handle Inputs
@@ -216,37 +231,85 @@ void retro_run(void) {
     // 4. Rendering Section
     video_clear(cfg.bg_rgb);
 
-    if (cfg.show_art && art_buffer) {
-        for (int y = 0; y < 80; y++) {
-            for (int x = 0; x < 80; x++) {
-                draw_pixel(120 + x, cfg.art_y + y, art_buffer[(y * art_h_src / 80) * art_w_src + (x * art_w_src / 80)]);
+    if (cfg.responsive) {
+        if (cfg.show_art && art_buffer && layout.art.w > 0 && layout.art.h > 0) {
+            for (int y = 0; y < layout.art.h; y++) {
+                int src_y = y * art_h_src / layout.art.h;
+                for (int x = 0; x < layout.art.w; x++) {
+                    int src_x = x * art_w_src / layout.art.w;
+                    draw_pixel(layout.art.x + x, layout.art.y + y, art_buffer[src_y * art_w_src + src_x]);
+                }
             }
         }
-    }
-    if (cfg.show_txt) {
-        draw_text(scroll_x, cfg.txt_y, display_str, cfg.fg_rgb);
-        scroll_x--;
-        if (scroll_x < -((int)strlen(display_str) * 8)) scroll_x = 320;
-    }
-    if (cfg.show_viz) {
-        viz_draw();
-    }
-    if (cfg.show_bar && total_frames > 0) {
-        float p = (float)cur_frame / total_frames;
-        for (int w = 0; w < 200; w++) draw_pixel(60 + w, cfg.bar_y, cfg.bg_rgb | 0x18C3);
-        for (int w = 0; w < (int)(p * 200); w++) draw_pixel(60 + w, cfg.bar_y, cfg.fg_rgb);
-    }
-    if (cfg.show_tim) {
-        int sec = cur_frame / source_rate;
-        sprintf(time_str, "%02d:%02d", sec / 60, sec % 60);
-        draw_text(140, cfg.tim_y, time_str, cfg.fg_rgb);
-    }
-    if (cfg.show_ico) {
-        if (is_shuffle) draw_text(20, cfg.ico_y, "SHUF", cfg.fg_rgb);
-        if (is_paused) draw_text(280, cfg.ico_y, "||", cfg.fg_rgb);
-        if (ff_rw_icon_timer > 0) {
-            draw_text(60, cfg.ico_y, (ff_rw_dir > 0) ? ">>" : "<<", cfg.fg_rgb);
-            ff_rw_icon_timer--;
+
+        if (cfg.show_txt && layout.text.w > 0) {
+            int right_edge = layout.content_x + layout.content_w;
+            int text_w = (int)strlen(display_str) * 8;
+            int left_bound = layout.content_x - text_w;
+            if (scroll_x > right_edge || scroll_x < left_bound)
+                scroll_x = right_edge;
+            draw_text(scroll_x, layout.text.y, display_str, cfg.fg_rgb);
+            scroll_x--;
+        }
+
+        if (cfg.show_viz) {
+            viz_draw();
+        }
+
+        if (cfg.show_bar && total_frames > 0 && layout.bar.w > 0) {
+            float p = (float)cur_frame / total_frames;
+            for (int w = 0; w < layout.bar.w; w++) draw_pixel(layout.bar.x + w, layout.bar.y, cfg.bg_rgb | 0x18C3);
+            for (int w = 0; w < (int)(p * layout.bar.w); w++) draw_pixel(layout.bar.x + w, layout.bar.y, cfg.fg_rgb);
+        }
+
+        if (cfg.show_tim && layout.time.w > 0) {
+            int sec = source_rate ? (int)(cur_frame / source_rate) : 0;
+            sprintf(time_str, "%02d:%02d", sec / 60, sec % 60);
+            int time_x = layout.time.x + (layout.time.w - ((int)strlen(time_str) * 8)) / 2;
+            draw_text(time_x, layout.time.y, time_str, cfg.fg_rgb);
+        }
+
+        if (cfg.show_ico && layout.icons.w > 0 && layout.icons.h > 0) {
+            if (is_shuffle) draw_text(layout.icon_shuffle_x, layout.icons.y, "SHUF", cfg.fg_rgb);
+            if (is_paused) draw_text(layout.icon_pause_x, layout.icons.y, "||", cfg.fg_rgb);
+            if (ff_rw_icon_timer > 0) {
+                draw_text(layout.icon_seek_x, layout.icons.y, (ff_rw_dir > 0) ? ">>" : "<<", cfg.fg_rgb);
+                ff_rw_icon_timer--;
+            }
+        }
+    } else {
+        if (cfg.show_art && art_buffer) {
+            for (int y = 0; y < 80; y++) {
+                for (int x = 0; x < 80; x++) {
+                    draw_pixel(120 + x, cfg.art_y + y, art_buffer[(y * art_h_src / 80) * art_w_src + (x * art_w_src / 80)]);
+                }
+            }
+        }
+        if (cfg.show_txt) {
+            draw_text(scroll_x, cfg.txt_y, display_str, cfg.fg_rgb);
+            scroll_x--;
+            if (scroll_x < -((int)strlen(display_str) * 8)) scroll_x = FB_WIDTH;
+        }
+        if (cfg.show_viz) {
+            viz_draw();
+        }
+        if (cfg.show_bar && total_frames > 0) {
+            float p = (float)cur_frame / (float)total_frames;
+            for (int w = 0; w < 200; w++) draw_pixel(60 + w, cfg.bar_y, cfg.bg_rgb | 0x18C3);
+            for (int w = 0; w < (int)(p * 200); w++) draw_pixel(60 + w, cfg.bar_y, cfg.fg_rgb);
+        }
+        if (cfg.show_tim) {
+            int sec = source_rate ? (int)(cur_frame / source_rate) : 0;
+            sprintf(time_str, "%02d:%02d", sec / 60, sec % 60);
+            draw_text(140, cfg.tim_y, time_str, cfg.fg_rgb);
+        }
+        if (cfg.show_ico) {
+            if (is_shuffle) draw_text(20, cfg.ico_y, "SHUF", cfg.fg_rgb);
+            if (is_paused) draw_text(280, cfg.ico_y, "||", cfg.fg_rgb);
+            if (ff_rw_icon_timer > 0) {
+                draw_text(60, cfg.ico_y, (ff_rw_dir > 0) ? ">>" : "<<", cfg.fg_rgb);
+                ff_rw_icon_timer--;
+            }
         }
     }
     video_cb(framebuffer, FB_WIDTH, FB_HEIGHT, FB_WIDTH * 2);
