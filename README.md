@@ -28,7 +28,6 @@ Place album art (`cover.png`, `cover.jpg`, or `folder.jpg`) in the same folder a
 | Show Progress Bar | Playback progress | On |
 | Show Time | Current/total time | On |
 | Show Icons | Playback state icons | On |
-| LCD Effect | CRT scanline overlay | On |
 
 ### Colors
 Background and foreground RGB values (0-255) for UI elements.

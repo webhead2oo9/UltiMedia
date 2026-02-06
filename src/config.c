@@ -24,8 +24,6 @@ void config_update(retro_environment_t environ_cb) {
     var.key = "media_show_bar"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.show_bar = !strcmp(var.value, "On"); else cfg.show_bar = true;
     var.key = "media_show_tim"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.show_tim = !strcmp(var.value, "On"); else cfg.show_tim = true;
     var.key = "media_show_ico"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.show_ico = !strcmp(var.value, "On"); else cfg.show_ico = true;
-    var.key = "media_lcd"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.lcd_on = !strcmp(var.value, "On"); else cfg.lcd_on = true;
-
     var.key = "media_art_y"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.art_y = atoi(var.value); else cfg.art_y = 40;
     var.key = "media_txt_y"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.txt_y = atoi(var.value); else cfg.txt_y = 150;
     var.key = "media_viz_y"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.viz_y = atoi(var.value); else cfg.viz_y = 140;
@@ -55,7 +53,6 @@ void config_declare_variables(retro_environment_t cb) {
         { "media_art_y", "Art Y; 40|0|80|120" }, { "media_txt_y", "Text Y; 150|20|120|200" },
         { "media_viz_y", "Viz Y; 140|80|200" }, { "media_bar_y", "Bar Y; 180|100|210" },
         { "media_tim_y", "Time Y; 190|110|220" }, { "media_ico_y", "Icon Y; 20|50|200" },
-        { "media_lcd", "LCD Effect; On|Off" },
         { "media_viz_bands", "Viz Bands; 40|20" },
         { "media_viz_mode", "Viz Mode; Bars|VU Meter|Dots|Line" },
         { "media_viz_gradient", "Viz Gradient; On|Off" },

@@ -27,15 +27,6 @@ void video_clear(uint16_t bg_color) {
     }
 }
 
-void video_apply_lcd_effect(void) {
-    if (!framebuffer) return;
-    for (int y = 0; y < FB_HEIGHT; y += 2) {
-        for (int x = 0; x < FB_WIDTH; x++) {
-            framebuffer[y * FB_WIDTH + x] = (framebuffer[y * FB_WIDTH + x] >> 1) & 0x7BEF;
-        }
-    }
-}
-
 void draw_pixel(int x, int y, uint16_t color) {
     if (x >= 0 && x < FB_WIDTH && y >= 0 && y < FB_HEIGHT) {
         framebuffer[y * FB_WIDTH + x] = color;

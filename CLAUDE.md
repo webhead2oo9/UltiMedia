@@ -91,4 +91,3 @@ UI elements are configurable via LibRetro core options:
 - Position offsets (art_y, txt_y, viz_y, bar_y, tim_y, ico_y)
 - Visibility toggles (show_art, show_txt, show_viz, etc.)
 - Colors (bg_rgb, fg_rgb)
-- LCD scanline effect toggle

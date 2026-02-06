@@ -17,9 +17,6 @@ void video_deinit(void);
 // Clear framebuffer to background color
 void video_clear(uint16_t bg_color);
 
-// Apply LCD scanline effect
-void video_apply_lcd_effect(void);
-
 // Draw a single pixel
 void draw_pixel(int x, int y, uint16_t color);
 

@@ -249,10 +249,6 @@ void retro_run(void) {
             ff_rw_icon_timer--;
         }
     }
-    if (cfg.lcd_on) {
-        video_apply_lcd_effect();
-    }
-
     video_cb(framebuffer, FB_WIDTH, FB_HEIGHT, FB_WIDTH * 2);
 }
 
