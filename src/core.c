@@ -41,6 +41,13 @@ static int ff_rw_dir = 0;
 // Forward declarations
 static void open_track(int idx);
 
+static int next_viz_mode(int mode) {
+    if (mode == 0) return 3; // Bars -> VU Meter
+    if (mode == 3) return 1; // VU Meter -> Dots
+    if (mode == 1) return 2; // Dots -> Line
+    return 0; // Line/unknown -> Bars
+}
+
 // Helper function for case-insensitive string comparison
 static int strcasecmp_simple(const char *s1, const char *s2) {
     while (*s1 && *s2) {
@@ -163,7 +170,7 @@ static void open_track(int idx) {
     }
 
     // Load metadata and album art
-    metadata_load(p, m3u_base_path, cfg.use_filename);
+    metadata_load(p, m3u_base_path, cfg.track_text_mode);
     scroll_x = cfg.responsive ? (layout.content_x + layout.content_w) : FB_WIDTH;
 }
 
@@ -207,7 +214,8 @@ void retro_run(void) {
     if (debounce > 0) debounce--;
     else {
         if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y)) { is_shuffle = !is_shuffle; debounce = 20; }
-        if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START)) { is_paused = !is_paused; debounce = 20; }
+        if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B)) { is_paused = !is_paused; debounce = 20; }
+        if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X)) { cfg.viz_mode = next_viz_mode(cfg.viz_mode); debounce = 20; }
         if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R)) { open_track(is_shuffle && track_count > 0 ? rand()%track_count : current_idx + 1); debounce = 20; }
         if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L)) { open_track(current_idx - 1); debounce = 20; }
     }

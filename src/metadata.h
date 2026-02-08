@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include "config.h"
 
 // Album art buffer (RGB565)
 extern uint16_t *art_buffer;
@@ -14,7 +15,7 @@ int parse_id3v2(const char* path, char* artist, char* title, char* album, int ma
 
 // Load metadata and album art for a track
 // Sets display_str and loads art_buffer
-void metadata_load(const char *track_path, const char *m3u_base_path, int use_filename);
+void metadata_load(const char *track_path, const char *m3u_base_path, TrackTextMode track_text_mode);
 
 // Free album art buffer
 void metadata_free_art(void);

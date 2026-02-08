@@ -5,6 +5,15 @@
 
 Config cfg;
 
+static TrackTextMode parse_track_text_mode(const char *value) {
+    if (!value) return SHOW_ID;
+    if (!strcmp(value, "Show filename with extension") || !strcmp(value, "On"))
+        return SHOW_FILENAME_WITH_EXT;
+    if (!strcmp(value, "Show Filename without extension"))
+        return SHOW_FILENAME_WITHOUT_EXT;
+    return SHOW_ID;
+}
+
 void config_update(retro_environment_t environ_cb) {
     struct retro_variable var = {0};
     int r, g, b;
@@ -25,7 +34,7 @@ void config_update(retro_environment_t environ_cb) {
     var.key = "media_show_bar"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.show_bar = !strcmp(var.value, "On"); else cfg.show_bar = true;
     var.key = "media_show_tim"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.show_tim = !strcmp(var.value, "On"); else cfg.show_tim = true;
     var.key = "media_show_ico"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.show_ico = !strcmp(var.value, "On"); else cfg.show_ico = true;
-    var.key = "media_responsive"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.responsive = !strcmp(var.value, "On"); else cfg.responsive = false;
+    var.key = "media_responsive"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.responsive = !strcmp(var.value, "On"); else cfg.responsive = true;
     var.key = "media_art_y"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.art_y = atoi(var.value); else cfg.art_y = 40;
     var.key = "media_txt_y"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.txt_y = atoi(var.value); else cfg.txt_y = 150;
     var.key = "media_viz_y"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.viz_y = atoi(var.value); else cfg.viz_y = 140;
@@ -48,7 +57,7 @@ void config_update(retro_environment_t environ_cb) {
     } else cfg.viz_mode = 0;
     var.key = "media_viz_gradient"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.viz_gradient = !strcmp(var.value, "On"); else cfg.viz_gradient = true;
     var.key = "media_viz_peak_hold"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.viz_peak_hold = atoi(var.value); else cfg.viz_peak_hold = 30;
-    var.key = "media_use_filename"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.use_filename = !strcmp(var.value, "On"); else cfg.use_filename = false;
+    var.key = "media_use_filename"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.track_text_mode = parse_track_text_mode(var.value); else cfg.track_text_mode = SHOW_ID;
 }
 
 void config_declare_variables(retro_environment_t cb) {
@@ -58,7 +67,7 @@ void config_declare_variables(retro_environment_t cb) {
         { "media_show_art", "Show Art; On|Off" }, { "media_show_txt", "Show Scroll Text; On|Off" },
         { "media_show_viz", "Show Visualizer; On|Off" }, { "media_show_bar", "Show Progress Bar; On|Off" },
         { "media_show_tim", "Show Time; On|Off" }, { "media_show_ico", "Show Icons; On|Off" },
-        { "media_responsive", "Responsive Layout; Off|On" },
+        { "media_responsive", "Responsive Layout; On|Off" },
         { "media_ui_top", "UI Top %; 20|0|10|30|40|50" },
         { "media_ui_bottom", "UI Bottom %; 80|50|60|70|90|100" },
         { "media_ui_left", "UI Left %; 0|10|20|30" },
@@ -70,7 +79,7 @@ void config_declare_variables(retro_environment_t cb) {
         { "media_viz_mode", "Viz Mode; Bars|VU Meter|Dots|Line" },
         { "media_viz_gradient", "Viz Gradient; On|Off" },
         { "media_viz_peak_hold", "Peak Hold; 30|0|15|45|60" },
-        { "media_use_filename", "Show Filename Only; Off|On" },
+        { "media_use_filename", "Track Text Mode; Show ID|Show filename with extension|Show Filename without extension" },
         { NULL, NULL }
     };
     cb(RETRO_ENVIRONMENT_SET_VARIABLES, (void*)vars);

@@ -42,7 +42,7 @@ void layout_compute(void) {
     layout.area_y = y0;
     layout.area_w = x1 - x0;
     layout.area_h = y1 - y0;
-    layout.is_wide = layout.area_w >= layout.area_h;
+    layout.is_wide = (layout.area_w * 3) > (layout.area_h * 4);
     layout.art_reserves_space = cfg.show_art;
 
     layout.art = zero_rect();

@@ -240,6 +240,9 @@ static void draw_vu_meter_mode(const int16_t *audio_buf, int samples_per_frame) 
     int label_x = 80;
     int meter_x = 95;
     int meter_w = 180;
+    const int meter_h = 4;
+    const int meter_gap = 2;
+    const int pair_h = meter_h * 2 + meter_gap;
     int left_y = cfg.viz_y - 15;
     int right_y = cfg.viz_y - 5;
 
@@ -249,12 +252,14 @@ static void draw_vu_meter_mode(const int16_t *audio_buf, int samples_per_frame) 
         meter_x = layout.viz.x + (layout.viz.w - meter_w);
         label_x = layout.viz.x;
 
-        if (layout.viz.h >= 10) {
-            left_y = layout.viz.y;
-            right_y = layout.viz.y + layout.viz.h - 4;
+        if (layout.viz.h >= pair_h) {
+            int pair_top = layout.viz.y + (layout.viz.h - pair_h) / 2;
+            left_y = pair_top;
+            right_y = pair_top + meter_h + meter_gap;
         } else {
             // Too short for two meters, show only left as a mono meter
-            left_y = layout.viz.y;
+            left_y = layout.viz.y + (layout.viz.h - meter_h) / 2;
+            if (left_y < layout.viz.y) left_y = layout.viz.y;
             right_y = -1;
         }
     }
@@ -265,12 +270,12 @@ static void draw_vu_meter_mode(const int16_t *audio_buf, int samples_per_frame) 
     if (left_w > meter_w) left_w = meter_w;
     for (int x = 0; x < left_w; x++) {
         uint16_t color = cfg.viz_gradient ? get_gradient_color((float)x / (float)meter_w) : cfg.fg_rgb;
-        for (int y = 0; y < 4; y++) draw_pixel(meter_x + x, left_y + y, color);
+        for (int y = 0; y < meter_h; y++) draw_pixel(meter_x + x, left_y + y, color);
     }
     if (cfg.viz_peak_hold > 0 && viz_peak_timers[0] > 0) {
         int peak_x = (int)(viz_peaks[0] * meter_w);
         if (peak_x >= meter_w) peak_x = meter_w - 1;
-        for (int y = 0; y < 4; y++) draw_pixel(meter_x + peak_x, left_y + y, 0xF800);
+        for (int y = 0; y < meter_h; y++) draw_pixel(meter_x + peak_x, left_y + y, 0xF800);
     }
 
     // Draw Right meter (skip if too short for two meters)
@@ -280,12 +285,12 @@ static void draw_vu_meter_mode(const int16_t *audio_buf, int samples_per_frame) 
         if (right_w > meter_w) right_w = meter_w;
         for (int x = 0; x < right_w; x++) {
             uint16_t color = cfg.viz_gradient ? get_gradient_color((float)x / (float)meter_w) : cfg.fg_rgb;
-            for (int y = 0; y < 4; y++) draw_pixel(meter_x + x, right_y + y, color);
+            for (int y = 0; y < meter_h; y++) draw_pixel(meter_x + x, right_y + y, color);
         }
         if (cfg.viz_peak_hold > 0 && viz_peak_timers[1] > 0) {
             int peak_x = (int)(viz_peaks[1] * meter_w);
             if (peak_x >= meter_w) peak_x = meter_w - 1;
-            for (int y = 0; y < 4; y++) draw_pixel(meter_x + peak_x, right_y + y, 0xF800);
+            for (int y = 0; y < meter_h; y++) draw_pixel(meter_x + peak_x, right_y + y, 0xF800);
         }
     }
 }

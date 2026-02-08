@@ -10,6 +10,14 @@ A LibRetro audio player for EmuVR. Plays music with album artwork, visualizers, 
 2. Place it in your EmuVR `cores` folder
 3. Load an M3U playlist or audio file
 
+## Controls
+
+- `B` - Pause/Play
+- `X` - Cycle Viz Mode (Bars -> VU Meter -> Dots -> Line)
+- `L` / `R` - Previous / Next Track
+- `LEFT` / `RIGHT` - Seek backward / forward
+- `Y` - Toggle Shuffle
+
 ## Supported Formats
 
 - **Audio:** MP3, OGG, FLAC, WAV
@@ -46,7 +54,8 @@ Adjust Y position of each element (Art, Text, Viz, Bar, Time, Icons) to customiz
 ### Other
 | Option | Description | Default |
 |--------|-------------|---------|
-| Show Filename Only | Use filename instead of metadata | Off |
+| Responsive Layout | Auto-place art and UI by usable aspect ratio | On |
+| Track Text Mode | Show ID, Show filename with extension, Show Filename without extension | Show ID |
 
 ## License
 
