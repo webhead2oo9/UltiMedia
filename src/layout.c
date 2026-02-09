@@ -144,6 +144,15 @@ void layout_compute(void) {
                   (use_bar ? bar_h : 0) + (use_time ? time_h : 0) + viz_h;
     }
 
+    if (use_viz && cfg.viz_mode == 3) {
+        // VU meter renders a compact two-row meter; keep its layout block tight.
+        const int vu_compact_h = 12;
+        if (viz_h > vu_compact_h) {
+            fixed_h -= (viz_h - vu_compact_h);
+            viz_h = vu_compact_h;
+        }
+    }
+
     int gap = 0;
     const int gap_count = (blocks > 1) ? (blocks - 1) : 0;
     if (gap_count > 0 && layout.content_h > fixed_h) {
@@ -153,11 +162,18 @@ void layout_compute(void) {
 
     int used_h = fixed_h + (gap * gap_count);
     int surplus = layout.content_h - used_h;
-    if (use_viz) viz_h += surplus;
-    if (use_viz && viz_h < 1) viz_h = 1;
-
     int y = layout.content_y;
-    if (!use_viz && surplus > 0) y += surplus / 2;
+    if (use_viz) {
+        if (cfg.viz_mode == 3) {
+            // Center the full stack instead of inflating VU mode's internal blank space.
+            if (surplus > 0) y += surplus / 2;
+        } else {
+            viz_h += surplus;
+        }
+    } else if (surplus > 0) {
+        y += surplus / 2;
+    }
+    if (use_viz && viz_h < 1) viz_h = 1;
 
     if (use_icons) {
         layout.icons.x = layout.content_x;
