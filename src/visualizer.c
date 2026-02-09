@@ -29,10 +29,23 @@ uint16_t get_gradient_color(float level) {
 void viz_update_levels(const int16_t *audio_buf, int samples_per_frame) {
     int sample_stride = (cfg.viz_bands == 40) ? 20 : 40;
     int band_count = cfg.viz_bands;
+    int total_samples = samples_per_frame * 2; // Interleaved stereo buffer
+
+    if (!audio_buf || total_samples <= 0) {
+        for (int i = 0; i < band_count; i++) {
+            viz_levels[i] *= 0.85f;
+            if (viz_peak_timers[i] > 0) viz_peak_timers[i]--;
+            else viz_peaks[i] *= 0.95f;
+        }
+        return;
+    }
 
     for (int i = 0; i < band_count; i++) {
+        int sample_idx = i * sample_stride;
+        if (sample_idx >= total_samples) sample_idx = total_samples - 1;
+
         // Manual abs to avoid undefined behavior with INT16_MIN (-32768)
-        int32_t sample = audio_buf[i * sample_stride];
+        int32_t sample = audio_buf[sample_idx];
         float p = (sample < 0 ? -sample : sample) / 32768.0f;
 
         // Update current level with decay
