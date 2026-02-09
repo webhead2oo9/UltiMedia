@@ -43,8 +43,8 @@ void config_update(retro_environment_t environ_cb) {
     var.key = "media_ico_y"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.ico_y = atoi(var.value); else cfg.ico_y = 20;
     var.key = "media_ui_top"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.ui_top = atoi(var.value); else cfg.ui_top = 20;
     var.key = "media_ui_bottom"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.ui_bottom = atoi(var.value); else cfg.ui_bottom = 80;
-    var.key = "media_ui_left"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.ui_left = atoi(var.value); else cfg.ui_left = 0;
-    var.key = "media_ui_right"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.ui_right = atoi(var.value); else cfg.ui_right = 100;
+    var.key = "media_ui_left"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.ui_left = atoi(var.value); else cfg.ui_left = 10;
+    var.key = "media_ui_right"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.ui_right = atoi(var.value); else cfg.ui_right = 90;
 
     var.key = "media_viz_bands"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.viz_bands = atoi(var.value); else cfg.viz_bands = 40;
     if (cfg.viz_bands < 1) cfg.viz_bands = 1;
@@ -70,8 +70,8 @@ void config_declare_variables(retro_environment_t cb) {
         { "media_responsive", "Responsive Layout; On|Off" },
         { "media_ui_top", "UI Top %; 20|0|10|30|40|50" },
         { "media_ui_bottom", "UI Bottom %; 80|50|60|70|90|100" },
-        { "media_ui_left", "UI Left %; 0|10|20|30" },
-        { "media_ui_right", "UI Right %; 100|70|80|90" },
+        { "media_ui_left", "UI Left %; 10|0|20|30" },
+        { "media_ui_right", "UI Right %; 90|70|80|100" },
         { "media_art_y", "Art Y; 40|0|80|120" }, { "media_txt_y", "Text Y; 150|20|120|200" },
         { "media_viz_y", "Viz Y; 140|80|200" }, { "media_bar_y", "Bar Y; 180|100|210" },
         { "media_tim_y", "Time Y; 190|110|220" }, { "media_ico_y", "Icon Y; 20|50|200" },

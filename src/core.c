@@ -175,9 +175,19 @@ static void open_track(int idx) {
 }
 
 static void refresh_config_and_layout(void) {
+    TrackTextMode old_track_text_mode = cfg.track_text_mode;
     config_update(environ_cb);
     if (cfg.responsive)
         layout_compute();
+
+    if (old_track_text_mode != cfg.track_text_mode &&
+        track_count > 0 &&
+        current_idx >= 0 &&
+        current_idx < track_count &&
+        tracks[current_idx]) {
+        metadata_refresh_display(tracks[current_idx], cfg.track_text_mode);
+        scroll_x = cfg.responsive ? (layout.content_x + layout.content_w) : FB_WIDTH;
+    }
 }
 
 // External declaration for viz_set_audio_for_vu
@@ -438,6 +448,10 @@ bool retro_load_game(const struct retro_game_info *g) {
     }
 
     if (track_count == 0) return false;
+
+    config_update(environ_cb);
+    if (cfg.responsive)
+        layout_compute();
 
     open_track(0);
     return true;

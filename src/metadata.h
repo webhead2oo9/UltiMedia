@@ -17,5 +17,8 @@ int parse_id3v2(const char* path, char* artist, char* title, char* album, int ma
 // Sets display_str and loads art_buffer
 void metadata_load(const char *track_path, const char *m3u_base_path, TrackTextMode track_text_mode);
 
+// Refresh display_str for a track without reloading album art
+void metadata_refresh_display(const char *track_path, TrackTextMode track_text_mode);
+
 // Free album art buffer
 void metadata_free_art(void);

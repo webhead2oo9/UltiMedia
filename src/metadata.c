@@ -274,7 +274,7 @@ void metadata_free_art(void) {
     }
 }
 
-void metadata_load(const char *track_path, const char *m3u_base_path, TrackTextMode track_text_mode) {
+static void metadata_build_display(const char *track_path, TrackTextMode track_text_mode, char *album_out, size_t album_out_size) {
     char meta_title[64] = {0};
     char meta_artist[64] = {0};
     char cur_album[64] = {0};
@@ -323,6 +323,20 @@ void metadata_load(const char *track_path, const char *m3u_base_path, TrackTextM
     } else {
         set_display_from_filename(track_path, 0);
     }
+
+    if (album_out && album_out_size > 0) {
+        strncpy(album_out, cur_album, album_out_size - 1);
+        album_out[album_out_size - 1] = '\0';
+    }
+}
+
+void metadata_refresh_display(const char *track_path, TrackTextMode track_text_mode) {
+    metadata_build_display(track_path, track_text_mode, NULL, 0);
+}
+
+void metadata_load(const char *track_path, const char *m3u_base_path, TrackTextMode track_text_mode) {
+    char cur_album[64] = {0};
+    metadata_build_display(track_path, track_text_mode, cur_album, sizeof(cur_album));
 
     // --- Load Artwork (The 5 Location Search) ---
     metadata_free_art();

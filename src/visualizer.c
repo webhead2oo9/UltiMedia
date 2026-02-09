@@ -241,10 +241,10 @@ static void draw_vu_meter_mode(const int16_t *audio_buf, int samples_per_frame) 
     int meter_x = 95;
     int meter_w = 180;
     const int meter_h = 4;
-    const int meter_gap = 2;
+    const int meter_gap = 3;
     const int pair_h = meter_h * 2 + meter_gap;
     int left_y = cfg.viz_y - 15;
-    int right_y = cfg.viz_y - 5;
+    int right_y = left_y + meter_h + meter_gap;
 
     if (cfg.responsive) {
         meter_w = layout.viz_meter_w;
