@@ -221,13 +221,31 @@ static void draw_line_mode(int band_count) {
 
 static void draw_vu_meter_mode(const int16_t *audio_buf, int samples_per_frame) {
     // Calculate L/R levels from stereo mix
-    float left_level = 0, right_level = 0;
-    for (int i = 0; i < samples_per_frame; i += 8) {
+    float left_level = 0.0f, right_level = 0.0f;
+    float left_sum = 0.0f, right_sum = 0.0f;
+    float left_peak = 0.0f, right_peak = 0.0f;
+    int level_samples = 0;
+
+    for (int i = 0; i < samples_per_frame; i += 4) {
         int32_t ls = audio_buf[i*2], rs = audio_buf[i*2+1];
         float l = (ls < 0 ? -ls : ls) / 32768.0f;
         float r = (rs < 0 ? -rs : rs) / 32768.0f;
-        if (l > left_level) left_level = l;
-        if (r > right_level) right_level = r;
+        left_sum += l;
+        right_sum += r;
+        if (l > left_peak) left_peak = l;
+        if (r > right_peak) right_peak = r;
+        level_samples++;
+    }
+
+    if (level_samples > 0) {
+        float left_avg = left_sum / (float)level_samples;
+        float right_avg = right_sum / (float)level_samples;
+
+        // Blend average + peak so channels stay responsive but don't collapse to identical values.
+        left_level = left_avg * 0.75f + left_peak * 0.25f;
+        right_level = right_avg * 0.75f + right_peak * 0.25f;
+        if (left_level > 1.0f) left_level = 1.0f;
+        if (right_level > 1.0f) right_level = 1.0f;
     }
 
     // Smooth with decay
