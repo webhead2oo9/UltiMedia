@@ -16,7 +16,7 @@ typedef struct {
     int art_y, txt_y, viz_y, bar_y, tim_y, ico_y;
     int ui_top, ui_bottom, ui_left, ui_right;
     bool show_art, show_txt, show_viz, show_bar, show_tim, show_ico;
-    bool responsive;
+    bool responsive, debug_layout;
     int viz_bands, viz_mode, viz_peak_hold;
     bool viz_gradient;
     TrackTextMode track_text_mode;

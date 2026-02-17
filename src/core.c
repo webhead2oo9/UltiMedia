@@ -48,6 +48,20 @@ static int next_viz_mode(int mode) {
     return 0; // Line/unknown -> Bars
 }
 
+static void draw_rect_outline(int x, int y, int w, int h, uint16_t color) {
+    if (w <= 0 || h <= 0) return;
+    int x2 = x + w - 1;
+    int y2 = y + h - 1;
+    for (int px = x; px <= x2; px++) {
+        draw_pixel(px, y, color);
+        draw_pixel(px, y2, color);
+    }
+    for (int py = y; py <= y2; py++) {
+        draw_pixel(x, py, color);
+        draw_pixel(x2, py, color);
+    }
+}
+
 // Helper function for case-insensitive string comparison
 static int strcasecmp_simple(const char *s1, const char *s2) {
     while (*s1 && *s2) {
@@ -298,6 +312,18 @@ void retro_run(void) {
                 draw_text(layout.icon_seek_x, layout.icons.y, (ff_rw_dir > 0) ? ">>" : "<<", cfg.fg_rgb);
                 ff_rw_icon_timer--;
             }
+        }
+
+        if (cfg.debug_layout) {
+            // Overlay layout boxes for responsive tuning/debugging.
+            draw_rect_outline(layout.area_x, layout.area_y, layout.area_w, layout.area_h, 0x07FF);
+            draw_rect_outline(layout.content_x, layout.content_y, layout.content_w, layout.content_h, 0x07E0);
+            draw_rect_outline(layout.art.x, layout.art.y, layout.art.w, layout.art.h, 0xFFE0);
+            draw_rect_outline(layout.icons.x, layout.icons.y, layout.icons.w, layout.icons.h, 0xFD20);
+            draw_rect_outline(layout.text.x, layout.text.y, layout.text.w, layout.text.h, 0xF81F);
+            draw_rect_outline(layout.viz.x, layout.viz.y, layout.viz.w, layout.viz.h, 0xF800);
+            draw_rect_outline(layout.bar.x, layout.bar.y, layout.bar.w, layout.bar.h, 0xFFFF);
+            draw_rect_outline(layout.time.x, layout.time.y, layout.time.w, layout.time.h, 0x001F);
         }
     } else {
         if (cfg.show_art && art_buffer) {

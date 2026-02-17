@@ -81,6 +81,7 @@ void config_update(retro_environment_t environ_cb) {
     cfg.show_tim = get_bool_var(environ_cb, "media_show_tim", true);
     cfg.show_ico = get_bool_var(environ_cb, "media_show_ico", true);
     cfg.responsive = get_bool_var(environ_cb, "media_responsive", true);
+    cfg.debug_layout = get_bool_var(environ_cb, "media_debug_layout", false);
     cfg.art_y = get_int_var(environ_cb, "media_art_y", 40, -4096, 4096);
     cfg.txt_y = get_int_var(environ_cb, "media_txt_y", 150, -4096, 4096);
     cfg.viz_y = get_int_var(environ_cb, "media_viz_y", 140, -4096, 4096);
@@ -121,6 +122,7 @@ void config_declare_variables(retro_environment_t cb) {
         { "media_show_viz", "Show Visualizer; On|Off" }, { "media_show_bar", "Show Progress Bar; On|Off" },
         { "media_show_tim", "Show Time; On|Off" }, { "media_show_ico", "Show Icons; On|Off" },
         { "media_responsive", "Responsive Layout; On|Off" },
+        { "media_debug_layout", "Debug Layout Bounds; Off|On" },
         { "media_ui_top", "UI Top %; 20|0|10|30|40|50" },
         { "media_ui_bottom", "UI Bottom %; 80|50|60|70|90|100" },
         { "media_ui_left", "UI Left %; 10|0|20|30" },
