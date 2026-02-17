@@ -23,6 +23,8 @@ static float fft_band_energy[MAX_VIZ_BANDS] = {0};
 static float fft_noise_floor[MAX_VIZ_BANDS] = {0};
 static float fft_auto_gain = 10.0f;
 static float fft_ref_level = 0.020f;
+static float fft_hp_x1 = 0.0f;
+static float fft_hp_y1 = 0.0f;
 
 static int viz_band_x(int band_idx, int band_count, int item_w, int start_x, int spacing) {
     if (!cfg.responsive) return start_x + (band_idx * spacing);
@@ -141,8 +143,12 @@ static void fft_update_levels(const int16_t *audio_buf, int samples_per_frame, i
         int32_t left = audio_buf[src];
         int32_t right = audio_buf[src + 1];
         float mono = (float)(left + right) * (0.5f / 32768.0f);
-        mono_samples[i] = mono;
-        dc_sum += mono;
+        // High-pass to reduce rumble/sub-bass bias before spectral analysis.
+        float hp = mono - fft_hp_x1 + 0.995f * fft_hp_y1;
+        fft_hp_x1 = mono;
+        fft_hp_y1 = hp;
+        mono_samples[i] = hp;
+        dc_sum += hp;
     }
 
     float dc_bias = dc_sum / (float)FFT_SIZE;
@@ -183,18 +189,21 @@ static void fft_update_levels(const int16_t *audio_buf, int samples_per_frame, i
         }
         if (bins > 0) energy /= (float)bins;
 
-        // Slightly counter the natural low-frequency dominance so bars move more evenly.
-        float tilt = 0.92f + (0.22f * t0);
-        energy *= tilt;
+        // Whiten spectrum response so low bands do not dominate by default.
+        float center_freq = sqrtf(f0 * f1);
+        float whiten = powf(center_freq / 1000.0f, 0.40f);
+        if (whiten < 0.22f) whiten = 0.22f;
+        if (whiten > 1.50f) whiten = 1.50f;
+        energy *= whiten;
 
         // Track a slow per-band floor and remove it to avoid pinned bars in quiet material.
         float floor = fft_noise_floor[i];
-        if (floor <= 0.0f) floor = energy * 0.20f;
-        if (energy < floor) floor = floor * 0.96f + energy * 0.04f;
-        else floor = floor * 0.9995f + energy * 0.0005f;
+        if (floor <= 0.0f) floor = energy * 0.50f;
+        if (energy < floor) floor = floor * 0.94f + energy * 0.06f;
+        else floor = floor * 0.98f + energy * 0.02f;
         fft_noise_floor[i] = floor;
 
-        float cleaned = energy - (floor * 0.70f);
+        float cleaned = energy - (floor * 1.02f);
         if (cleaned < 0.0f) cleaned = 0.0f;
         fft_band_energy[i] = cleaned;
         sum_sq += cleaned * cleaned;
@@ -205,16 +214,16 @@ static void fft_update_levels(const int16_t *audio_buf, int samples_per_frame, i
     else fft_ref_level = fft_ref_level * 0.992f + frame_rms * 0.008f;
     if (fft_ref_level < 0.0003f) fft_ref_level = 0.0003f;
 
-    float target_gain = 0.22f / fft_ref_level;
+    float target_gain = 0.16f / fft_ref_level;
     if (target_gain < 1.0f) target_gain = 1.0f;
-    if (target_gain > 36.0f) target_gain = 36.0f;
-    if (target_gain < fft_auto_gain) fft_auto_gain = fft_auto_gain * 0.75f + target_gain * 0.25f;
-    else fft_auto_gain = fft_auto_gain * 0.97f + target_gain * 0.03f;
+    if (target_gain > 24.0f) target_gain = 24.0f;
+    if (target_gain < fft_auto_gain) fft_auto_gain = fft_auto_gain * 0.65f + target_gain * 0.35f;
+    else fft_auto_gain = fft_auto_gain * 0.96f + target_gain * 0.04f;
 
     for (int i = 0; i < band_count; i++) {
         float scaled = fft_band_energy[i] * fft_auto_gain;
         float db = 20.0f * log10f(scaled + 0.000001f);
-        float p = (db + 52.0f) / 46.0f;
+        float p = (db + 58.0f) / 52.0f;
         if (p < 0.0f) p = 0.0f;
         if (p > 1.0f) p = 1.0f;
 
