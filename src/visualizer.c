@@ -10,7 +10,7 @@ float viz_levels[MAX_VIZ_BANDS] = {0};
 float viz_peaks[MAX_VIZ_BANDS] = {0};
 int viz_peak_timers[MAX_VIZ_BANDS] = {0};
 
-#define FFT_SIZE 512
+#define FFT_SIZE 1024
 #define TWO_PI_F 6.28318530717958647692f
 #define FFT_MIN_FREQ 35.0f
 #define FFT_MAX_FREQ_RATIO 0.92f
@@ -25,6 +25,9 @@ static float fft_auto_gain = 10.0f;
 static float fft_ref_level = 0.020f;
 static float fft_hp_x1 = 0.0f;
 static float fft_hp_y1 = 0.0f;
+static float fft_ring[FFT_SIZE] = {0};
+static int fft_ring_pos = 0;
+static int fft_ring_count = 0;
 
 static int viz_band_x(int band_idx, int band_count, int item_w, int start_x, int spacing) {
     if (!cfg.responsive) return start_x + (band_idx * spacing);
@@ -135,11 +138,8 @@ static void fft_update_levels(const int16_t *audio_buf, int samples_per_frame, i
         return;
     }
 
-    float mono_samples[FFT_SIZE];
-    float dc_sum = 0.0f;
-    for (int i = 0; i < FFT_SIZE; i++) {
-        int src_frame = (i < available_frames) ? i : (available_frames - 1);
-        int src = src_frame * 2;
+    for (int i = 0; i < available_frames; i++) {
+        int src = i * 2;
         int32_t left = audio_buf[src];
         int32_t right = audio_buf[src + 1];
         float mono = (float)(left + right) * (0.5f / 32768.0f);
@@ -147,8 +147,24 @@ static void fft_update_levels(const int16_t *audio_buf, int samples_per_frame, i
         float hp = mono - fft_hp_x1 + 0.995f * fft_hp_y1;
         fft_hp_x1 = mono;
         fft_hp_y1 = hp;
-        mono_samples[i] = hp;
-        dc_sum += hp;
+        fft_ring[fft_ring_pos] = hp;
+        fft_ring_pos = (fft_ring_pos + 1) & (FFT_SIZE - 1);
+        if (fft_ring_count < FFT_SIZE) fft_ring_count++;
+    }
+
+    if (fft_ring_count < FFT_SIZE) {
+        viz_decay_levels(band_count);
+        return;
+    }
+
+    float mono_samples[FFT_SIZE];
+    float dc_sum = 0.0f;
+    int ring_idx = fft_ring_pos;
+    for (int i = 0; i < FFT_SIZE; i++) {
+        float s = fft_ring[ring_idx];
+        mono_samples[i] = s;
+        dc_sum += s;
+        ring_idx = (ring_idx + 1) & (FFT_SIZE - 1);
     }
 
     float dc_bias = dc_sum / (float)FFT_SIZE;
@@ -169,31 +185,38 @@ static void fft_update_levels(const int16_t *audio_buf, int samples_per_frame, i
         float t1 = (float)(i + 1) / (float)band_count;
         float f0 = FFT_MIN_FREQ * powf(max_freq / FFT_MIN_FREQ, t0);
         float f1 = FFT_MIN_FREQ * powf(max_freq / FFT_MIN_FREQ, t1);
-        int b0 = (int)(f0 * (float)FFT_SIZE / (float)OUT_RATE);
-        int b1 = (int)(f1 * (float)FFT_SIZE / (float)OUT_RATE);
+        int b0 = (int)floorf(f0 * (float)FFT_SIZE / (float)OUT_RATE);
+        int b1 = (int)ceilf(f1 * (float)FFT_SIZE / (float)OUT_RATE);
 
         if (b0 < 1) b0 = 1;
         if (b1 < 1) b1 = 1;
         if (b0 > max_bin) b0 = max_bin;
         if (b1 > max_bin) b1 = max_bin;
         if (b1 < b0) b1 = b0;
+        int pad = (i < band_count / 4) ? 2 : 1;
+        b0 -= pad;
+        b1 += pad;
+        if (b0 < 1) b0 = 1;
+        if (b1 > max_bin) b1 = max_bin;
 
-        float energy = 0.0f;
+        float power_sum = 0.0f;
         int bins = 0;
         for (int b = b0; b <= b1; b++) {
             float real = fft_re[b];
             float imag = fft_im[b];
-            float mag = sqrtf(real * real + imag * imag) * (2.0f / (float)FFT_SIZE);
-            energy += mag;
+            power_sum += real * real + imag * imag;
             bins++;
         }
-        if (bins > 0) energy /= (float)bins;
+        float energy = 0.0f;
+        if (bins > 0) {
+            energy = sqrtf(power_sum / (float)bins) * (2.0f / (float)FFT_SIZE);
+        }
 
         // Whiten spectrum response so low bands do not dominate by default.
         float center_freq = sqrtf(f0 * f1);
-        float whiten = powf(center_freq / 1000.0f, 0.40f);
-        if (whiten < 0.22f) whiten = 0.22f;
-        if (whiten > 1.50f) whiten = 1.50f;
+        float whiten = powf(center_freq / 1000.0f, 0.55f);
+        if (whiten < 0.18f) whiten = 0.18f;
+        if (whiten > 1.60f) whiten = 1.60f;
         energy *= whiten;
 
         // Track a slow per-band floor and remove it to avoid pinned bars in quiet material.
@@ -214,21 +237,23 @@ static void fft_update_levels(const int16_t *audio_buf, int samples_per_frame, i
     else fft_ref_level = fft_ref_level * 0.992f + frame_rms * 0.008f;
     if (fft_ref_level < 0.0003f) fft_ref_level = 0.0003f;
 
-    float target_gain = 0.16f / fft_ref_level;
+    float target_gain = 0.14f / fft_ref_level;
     if (target_gain < 1.0f) target_gain = 1.0f;
-    if (target_gain > 24.0f) target_gain = 24.0f;
+    if (target_gain > 20.0f) target_gain = 20.0f;
     if (target_gain < fft_auto_gain) fft_auto_gain = fft_auto_gain * 0.65f + target_gain * 0.35f;
     else fft_auto_gain = fft_auto_gain * 0.96f + target_gain * 0.04f;
 
     for (int i = 0; i < band_count; i++) {
         float scaled = fft_band_energy[i] * fft_auto_gain;
         float db = 20.0f * log10f(scaled + 0.000001f);
-        float p = (db + 58.0f) / 52.0f;
+        float p = (db + 62.0f) / 56.0f;
         if (p < 0.0f) p = 0.0f;
         if (p > 1.0f) p = 1.0f;
 
-        if (p > viz_levels[i]) viz_levels[i] = viz_levels[i] * 0.50f + p * 0.50f;
-        else viz_levels[i] = viz_levels[i] * 0.90f + p * 0.10f;
+        float rise = (i < band_count / 4) ? 0.30f : 0.45f;
+        float fall = (i < band_count / 4) ? 0.94f : 0.90f;
+        if (p > viz_levels[i]) viz_levels[i] = viz_levels[i] * (1.0f - rise) + p * rise;
+        else viz_levels[i] = viz_levels[i] * fall + p * (1.0f - fall);
 
         if (viz_levels[i] > viz_peaks[i]) {
             viz_peaks[i] = viz_levels[i];
