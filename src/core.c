@@ -360,12 +360,13 @@ void retro_run(void) {
 void retro_set_environment(retro_environment_t cb) {
     environ_cb = cb;
     config_declare_variables(cb);
-    enum retro_pixel_format fmt = RETRO_PIXEL_FORMAT_RGB565;
+    enum retro_pixel_format fmt = RETRO_PIXEL_FORMAT_XRGB8888;
     use_xrgb8888 = false;
-    if (!cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &fmt)) {
-        fmt = RETRO_PIXEL_FORMAT_XRGB8888;
-        if (cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &fmt))
-            use_xrgb8888 = true;
+    if (cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &fmt)) {
+        use_xrgb8888 = true;
+    } else {
+        fmt = RETRO_PIXEL_FORMAT_RGB565;
+        cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &fmt);
     }
 }
 
