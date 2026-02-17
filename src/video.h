@@ -22,3 +22,6 @@ void draw_pixel(int x, int y, uint16_t color);
 
 // Draw text using 8x8 font
 void draw_text(int x, int y, const char* txt, uint16_t color);
+
+// Draw text clipped to a horizontal region [clip_x, clip_x + clip_w)
+void draw_text_clipped(int x, int y, const char* txt, uint16_t color, int clip_x, int clip_w);

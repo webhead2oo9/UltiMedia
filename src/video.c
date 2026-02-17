@@ -48,3 +48,27 @@ void draw_text(int x, int y, const char* txt, uint16_t color) {
         x += 8;
     }
 }
+
+void draw_text_clipped(int x, int y, const char* txt, uint16_t color, int clip_x, int clip_w) {
+    if (!txt || clip_w <= 0) return;
+
+    int clip_right = clip_x + clip_w;
+    while (*txt) {
+        uint8_t c = (*txt++) - 32;
+        int char_left = x;
+        int char_right = x + 8;
+
+        if (char_right > clip_x && char_left < clip_right && c < 96) {
+            for (int gy = 0; gy < 8; gy++) {
+                for (int gx = 0; gx < 8; gx++) {
+                    int px = x + gx;
+                    if (px < clip_x || px >= clip_right) continue;
+                    if (font8x8[c][gy] & (0x80 >> gx))
+                        draw_pixel(px, y + gy, color);
+                }
+            }
+        }
+
+        x += 8;
+    }
+}

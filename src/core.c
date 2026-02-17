@@ -265,12 +265,12 @@ void retro_run(void) {
         }
 
         if (cfg.show_txt && layout.text.w > 0) {
-            int right_edge = layout.content_x + layout.content_w;
+            int right_edge = layout.text.x + layout.text.w;
             int text_w = (int)strlen(display_str) * 8;
-            int left_bound = layout.content_x - text_w;
+            int left_bound = layout.text.x - text_w;
             if (scroll_x > right_edge || scroll_x < left_bound)
                 scroll_x = right_edge;
-            draw_text(scroll_x, layout.text.y, display_str, cfg.fg_rgb);
+            draw_text_clipped(scroll_x, layout.text.y, display_str, cfg.fg_rgb, layout.text.x, layout.text.w);
             scroll_x--;
         }
 
