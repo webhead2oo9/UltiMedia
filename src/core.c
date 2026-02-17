@@ -225,7 +225,11 @@ void retro_run(void) {
     else {
         if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y)) { is_shuffle = !is_shuffle; debounce = 20; }
         if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B)) { is_paused = !is_paused; debounce = 20; }
-        if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X)) { cfg.viz_mode = next_viz_mode(cfg.viz_mode); debounce = 20; }
+        if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X)) {
+            cfg.viz_mode = next_viz_mode(cfg.viz_mode);
+            if (cfg.responsive) layout_compute();
+            debounce = 20;
+        }
         if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R)) { open_track(is_shuffle && track_count > 0 ? rand()%track_count : current_idx + 1); debounce = 20; }
         if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L)) { open_track(current_idx - 1); debounce = 20; }
     }

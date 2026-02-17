@@ -8,6 +8,18 @@ float viz_levels[MAX_VIZ_BANDS] = {0};
 float viz_peaks[MAX_VIZ_BANDS] = {0};
 int viz_peak_timers[MAX_VIZ_BANDS] = {0};
 
+static int viz_band_x(int band_idx, int band_count, int item_w, int start_x, int spacing) {
+    if (!cfg.responsive) return start_x + (band_idx * spacing);
+
+    if (item_w < 1) item_w = 1;
+    if (item_w > layout.viz.w) item_w = layout.viz.w;
+    if (layout.viz.w <= item_w) return layout.viz.x;
+    if (band_count <= 1) return layout.viz.x + (layout.viz.w - item_w) / 2;
+
+    int span = layout.viz.w - item_w;
+    return layout.viz.x + (band_idx * span) / (band_count - 1);
+}
+
 uint16_t get_gradient_color(float level) {
     if (level < 0.5f) {
         // Green (0,255,0) → Yellow (255,255,0)
@@ -86,15 +98,18 @@ static void draw_bars_mode(int band_count) {
     }
     if (max_h < 1) max_h = 1;
 
+    int draw_bar_width = bar_width;
+    if (cfg.responsive && draw_bar_width > layout.viz.w) draw_bar_width = layout.viz.w;
+
     for (int i = 0; i < band_count; i++) {
         int h = (int)(viz_levels[i] * max_h);
         if (h > max_h) h = max_h;
-        int x_base = start_x + (i * spacing);
+        int x_base = viz_band_x(i, band_count, draw_bar_width, start_x, spacing);
 
         // Draw main bar
         for (int v = 0; v < h; v++) {
             uint16_t color = cfg.viz_gradient ? get_gradient_color((float)v / (float)max_h) : cfg.fg_rgb;
-            for (int w = 0; w < bar_width; w++) draw_pixel(x_base + w, base_y - v, color);
+            for (int w = 0; w < draw_bar_width; w++) draw_pixel(x_base + w, base_y - v, color);
         }
 
         // Draw peak hold dot
@@ -102,7 +117,7 @@ static void draw_bars_mode(int band_count) {
             int peak_h = (int)(viz_peaks[i] * max_h);
             if (peak_h >= max_h) peak_h = max_h - 1;
             uint16_t peak_color = cfg.viz_gradient ? 0xF800 : cfg.fg_rgb;
-            for (int w = 0; w < bar_width; w++) {
+            for (int w = 0; w < draw_bar_width; w++) {
                 draw_pixel(x_base + w, base_y - peak_h, peak_color);
                 if (peak_h + 1 < max_h) draw_pixel(x_base + w, base_y - peak_h - 1, peak_color);
             }
@@ -146,7 +161,7 @@ static void draw_dots_mode(int band_count) {
     for (int i = 0; i < band_count; i++) {
         int h = (int)(viz_levels[i] * max_h);
         if (h >= max_h) h = max_h - 1;
-        int x = start_x + (i * spacing);
+        int x = viz_band_x(i, band_count, 2, start_x, spacing);
         uint16_t color = cfg.viz_gradient ? get_gradient_color(viz_levels[i]) : cfg.fg_rgb;
 
         // Draw 2x2 dot
@@ -188,7 +203,7 @@ static void draw_line_mode(int band_count) {
     for (int i = 0; i < band_count; i++) {
         int h = (int)(viz_levels[i] * max_h);
         if (h >= max_h) h = max_h - 1;
-        int x = start_x + (i * spacing);
+        int x = viz_band_x(i, band_count, 1, start_x, spacing);
         uint16_t color = cfg.viz_gradient ? get_gradient_color(viz_levels[i]) : cfg.fg_rgb;
 
         // Draw vertical line
@@ -198,7 +213,7 @@ static void draw_line_mode(int band_count) {
         if (i < band_count - 1) {
             int next_h = (int)(viz_levels[i + 1] * max_h);
             if (next_h >= max_h) next_h = max_h - 1;
-            int next_x = start_x + ((i + 1) * spacing);
+            int next_x = viz_band_x(i + 1, band_count, 1, start_x, spacing);
             int dx = next_x - x;
             int dy = next_h - h;
 
