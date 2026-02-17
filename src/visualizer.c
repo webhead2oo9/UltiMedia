@@ -288,9 +288,11 @@ static void draw_vu_meter_mode(const int16_t *audio_buf, int samples_per_frame) 
     int meter_w = 180;
     const int meter_h = 4;
     const int meter_gap = 4;
-    const int pair_h = meter_h * 2 + meter_gap;
+    const int label_h = 8;
+    const int row_step = (meter_h + meter_gap > label_h) ? (meter_h + meter_gap) : label_h;
+    const int pair_h = row_step + label_h;
     int left_y = cfg.viz_y - 15;
-    int right_y = left_y + meter_h + meter_gap;
+    int right_y = left_y + row_step;
 
     if (cfg.responsive) {
         meter_w = layout.viz_meter_w;
@@ -301,7 +303,7 @@ static void draw_vu_meter_mode(const int16_t *audio_buf, int samples_per_frame) 
         if (layout.viz.h >= pair_h) {
             int pair_top = layout.viz.y + (layout.viz.h - pair_h) / 2;
             left_y = pair_top;
-            right_y = pair_top + meter_h + meter_gap;
+            right_y = pair_top + row_step;
         } else {
             // Too short for two meters, show only left as a mono meter
             left_y = layout.viz.y + (layout.viz.h - meter_h) / 2;

@@ -145,8 +145,8 @@ void layout_compute(void) {
     }
 
     if (use_viz && cfg.viz_mode == 3) {
-        // VU meter renders a compact two-row meter; keep its layout block tight.
-        const int vu_compact_h = 12;
+        // VU meter includes 8px text labels; reserve a slightly taller compact block.
+        const int vu_compact_h = 16;
         if (viz_h > vu_compact_h) {
             fixed_h -= (viz_h - vu_compact_h);
             viz_h = vu_compact_h;
