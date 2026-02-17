@@ -74,12 +74,6 @@ void config_update(retro_environment_t environ_cb) {
     b = get_int_var(environ_cb, "media_fg_b", 0, 0, 255);
     cfg.fg_rgb = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
 
-    // Safety fallback for malformed option state that yields invisible black-on-black UI.
-    if (cfg.bg_rgb == 0 && cfg.fg_rgb == 0) {
-        cfg.bg_rgb = ((0 >> 3) << 11) | ((64 >> 2) << 5) | (0 >> 3);
-        cfg.fg_rgb = ((0 >> 3) << 11) | ((255 >> 2) << 5) | (0 >> 3);
-    }
-
     cfg.show_art = get_bool_var(environ_cb, "media_show_art", true);
     cfg.show_txt = get_bool_var(environ_cb, "media_show_txt", true);
     cfg.show_viz = get_bool_var(environ_cb, "media_show_viz", true);
@@ -117,12 +111,6 @@ void config_update(retro_environment_t environ_cb) {
     cfg.viz_peak_hold = get_int_var(environ_cb, "media_viz_peak_hold", 30, 0, 300);
     cfg.track_text_mode = parse_track_text_mode(get_var_value(environ_cb, "media_use_filename"));
 
-    // Avoid a total black frame if stale options somehow disabled every drawable element.
-    if (!cfg.show_art && !cfg.show_txt && !cfg.show_viz &&
-        !cfg.show_bar && !cfg.show_tim && !cfg.show_ico) {
-        cfg.show_viz = true;
-        cfg.show_tim = true;
-    }
 }
 
 void config_declare_variables(retro_environment_t cb) {

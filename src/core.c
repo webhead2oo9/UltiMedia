@@ -22,7 +22,6 @@ static retro_video_refresh_t video_cb;
 static retro_audio_sample_batch_t audio_batch_cb;
 static retro_input_poll_t input_poll_cb;
 static retro_input_state_t input_state_cb;
-static bool use_xrgb8888 = false;
 
 // Playlist state
 static char *tracks[256];
@@ -335,39 +334,14 @@ void retro_run(void) {
             }
         }
     }
-    if (video_cb) {
-        if (use_xrgb8888) {
-            static uint32_t framebuffer_xrgb8888[FB_WIDTH * FB_HEIGHT];
-            for (int i = 0; i < FB_WIDTH * FB_HEIGHT; i++) {
-                uint16_t c = framebuffer[i];
-                uint32_t r5 = (c >> 11) & 0x1F;
-                uint32_t g6 = (c >> 5) & 0x3F;
-                uint32_t b5 = c & 0x1F;
-
-                // Expand 5/6-bit channels to 8-bit with bit replication.
-                uint32_t r8 = (r5 << 3) | (r5 >> 2);
-                uint32_t g8 = (g6 << 2) | (g6 >> 4);
-                uint32_t b8 = (b5 << 3) | (b5 >> 2);
-                framebuffer_xrgb8888[i] = (r8 << 16) | (g8 << 8) | b8;
-            }
-            video_cb(framebuffer_xrgb8888, FB_WIDTH, FB_HEIGHT, FB_WIDTH * 4);
-        } else {
-            video_cb(framebuffer, FB_WIDTH, FB_HEIGHT, FB_WIDTH * 2);
-        }
-    }
+    video_cb(framebuffer, FB_WIDTH, FB_HEIGHT, FB_WIDTH * 2);
 }
 
 void retro_set_environment(retro_environment_t cb) {
     environ_cb = cb;
     config_declare_variables(cb);
-    enum retro_pixel_format fmt = RETRO_PIXEL_FORMAT_XRGB8888;
-    use_xrgb8888 = false;
-    if (cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &fmt)) {
-        use_xrgb8888 = true;
-    } else {
-        fmt = RETRO_PIXEL_FORMAT_RGB565;
-        cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &fmt);
-    }
+    enum retro_pixel_format fmt = RETRO_PIXEL_FORMAT_RGB565;
+    cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &fmt);
 }
 
 bool retro_load_game(const struct retro_game_info *g) {
