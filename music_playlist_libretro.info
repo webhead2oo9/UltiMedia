@@ -2,7 +2,7 @@
 
 # Software Information
 display_name = "Music Playlist Core"
-authors = "KrisRetro"
+authors = "KrisRetro, webhead"
 corename = "music_playlist"
 supported_extensions = "m3u|mp3|ogg|flac"
 license = "MIT"
