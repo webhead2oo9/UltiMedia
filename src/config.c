@@ -1,5 +1,6 @@
 #include "config.h"
 #include "visualizer.h"
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -13,9 +14,25 @@ static const char *get_var_value(retro_environment_t environ_cb, const char *key
     return NULL;
 }
 
-static int get_int_var(retro_environment_t environ_cb, const char *key, int fallback) {
+static int parse_int_strict(const char *value, int fallback, int min_value, int max_value) {
+    if (!value || !value[0]) return fallback;
+
+    errno = 0;
+    char *end = NULL;
+    long parsed = strtol(value, &end, 10);
+    if (errno != 0 || end == value) return fallback;
+
+    while (*end == ' ' || *end == '\t') end++;
+    if (*end != '\0') return fallback;
+
+    if (parsed < min_value) return min_value;
+    if (parsed > max_value) return max_value;
+    return (int)parsed;
+}
+
+static int get_int_var(retro_environment_t environ_cb, const char *key, int fallback, int min_value, int max_value) {
     const char *value = get_var_value(environ_cb, key);
-    return value ? atoi(value) : fallback;
+    return parse_int_strict(value, fallback, min_value, max_value);
 }
 
 static bool parse_on_off(const char *value, bool fallback) {
@@ -47,15 +64,21 @@ static TrackTextMode parse_track_text_mode(const char *value) {
 void config_update(retro_environment_t environ_cb) {
     int r, g, b;
 
-    r = get_int_var(environ_cb, "media_bg_r", 0);
-    g = get_int_var(environ_cb, "media_bg_g", 64);
-    b = get_int_var(environ_cb, "media_bg_b", 0);
+    r = get_int_var(environ_cb, "media_bg_r", 0, 0, 255);
+    g = get_int_var(environ_cb, "media_bg_g", 64, 0, 255);
+    b = get_int_var(environ_cb, "media_bg_b", 0, 0, 255);
     cfg.bg_rgb = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
 
-    r = get_int_var(environ_cb, "media_fg_r", 0);
-    g = get_int_var(environ_cb, "media_fg_g", 255);
-    b = get_int_var(environ_cb, "media_fg_b", 0);
+    r = get_int_var(environ_cb, "media_fg_r", 0, 0, 255);
+    g = get_int_var(environ_cb, "media_fg_g", 255, 0, 255);
+    b = get_int_var(environ_cb, "media_fg_b", 0, 0, 255);
     cfg.fg_rgb = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
+
+    // Safety fallback for malformed option state that yields invisible black-on-black UI.
+    if (cfg.bg_rgb == 0 && cfg.fg_rgb == 0) {
+        cfg.bg_rgb = ((0 >> 3) << 11) | ((64 >> 2) << 5) | (0 >> 3);
+        cfg.fg_rgb = ((0 >> 3) << 11) | ((255 >> 2) << 5) | (0 >> 3);
+    }
 
     cfg.show_art = get_bool_var(environ_cb, "media_show_art", true);
     cfg.show_txt = get_bool_var(environ_cb, "media_show_txt", true);
@@ -64,18 +87,18 @@ void config_update(retro_environment_t environ_cb) {
     cfg.show_tim = get_bool_var(environ_cb, "media_show_tim", true);
     cfg.show_ico = get_bool_var(environ_cb, "media_show_ico", true);
     cfg.responsive = get_bool_var(environ_cb, "media_responsive", true);
-    cfg.art_y = get_int_var(environ_cb, "media_art_y", 40);
-    cfg.txt_y = get_int_var(environ_cb, "media_txt_y", 150);
-    cfg.viz_y = get_int_var(environ_cb, "media_viz_y", 140);
-    cfg.bar_y = get_int_var(environ_cb, "media_bar_y", 180);
-    cfg.tim_y = get_int_var(environ_cb, "media_tim_y", 190);
-    cfg.ico_y = get_int_var(environ_cb, "media_ico_y", 20);
-    cfg.ui_top = get_int_var(environ_cb, "media_ui_top", 20);
-    cfg.ui_bottom = get_int_var(environ_cb, "media_ui_bottom", 80);
-    cfg.ui_left = get_int_var(environ_cb, "media_ui_left", 10);
-    cfg.ui_right = get_int_var(environ_cb, "media_ui_right", 90);
+    cfg.art_y = get_int_var(environ_cb, "media_art_y", 40, -4096, 4096);
+    cfg.txt_y = get_int_var(environ_cb, "media_txt_y", 150, -4096, 4096);
+    cfg.viz_y = get_int_var(environ_cb, "media_viz_y", 140, -4096, 4096);
+    cfg.bar_y = get_int_var(environ_cb, "media_bar_y", 180, -4096, 4096);
+    cfg.tim_y = get_int_var(environ_cb, "media_tim_y", 190, -4096, 4096);
+    cfg.ico_y = get_int_var(environ_cb, "media_ico_y", 20, -4096, 4096);
+    cfg.ui_top = get_int_var(environ_cb, "media_ui_top", 20, 0, 100);
+    cfg.ui_bottom = get_int_var(environ_cb, "media_ui_bottom", 80, 0, 100);
+    cfg.ui_left = get_int_var(environ_cb, "media_ui_left", 10, 0, 100);
+    cfg.ui_right = get_int_var(environ_cb, "media_ui_right", 90, 0, 100);
 
-    cfg.viz_bands = get_int_var(environ_cb, "media_viz_bands", 40);
+    cfg.viz_bands = get_int_var(environ_cb, "media_viz_bands", 40, 1, MAX_VIZ_BANDS);
     if (cfg.viz_bands < 1) cfg.viz_bands = 1;
     if (cfg.viz_bands > MAX_VIZ_BANDS) cfg.viz_bands = MAX_VIZ_BANDS;
 
@@ -91,8 +114,15 @@ void config_update(retro_environment_t environ_cb) {
     }
 
     cfg.viz_gradient = get_bool_var(environ_cb, "media_viz_gradient", true);
-    cfg.viz_peak_hold = get_int_var(environ_cb, "media_viz_peak_hold", 30);
+    cfg.viz_peak_hold = get_int_var(environ_cb, "media_viz_peak_hold", 30, 0, 300);
     cfg.track_text_mode = parse_track_text_mode(get_var_value(environ_cb, "media_use_filename"));
+
+    // Avoid a total black frame if stale options somehow disabled every drawable element.
+    if (!cfg.show_art && !cfg.show_txt && !cfg.show_viz &&
+        !cfg.show_bar && !cfg.show_tim && !cfg.show_ico) {
+        cfg.show_viz = true;
+        cfg.show_tim = true;
+    }
 }
 
 void config_declare_variables(retro_environment_t cb) {
