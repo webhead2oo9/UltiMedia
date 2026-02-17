@@ -90,6 +90,70 @@ static int is_drive_letter(char c) {
     return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
 }
 
+static int is_localhost_host(const char *s, size_t len) {
+    return len == 9 && strncasecmp_simple(s, "localhost", 9) == 0;
+}
+
+static int hex_value(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+static void percent_decode_inplace(char *s) {
+    if (!s) return;
+    size_t r = 0;
+    size_t w = 0;
+    while (s[r]) {
+        if (s[r] == '%' && s[r + 1] && s[r + 2]) {
+            int hi = hex_value(s[r + 1]);
+            int lo = hex_value(s[r + 2]);
+            if (hi >= 0 && lo >= 0) {
+                s[w++] = (char)((hi << 4) | lo);
+                r += 3;
+                continue;
+            }
+        }
+        s[w++] = s[r++];
+    }
+    s[w] = '\0';
+}
+
+static char *file_uri_path_start(char *uri, bool *file_is_unc) {
+    if (!uri || !uri[0]) return uri;
+
+    // Keep Windows-style file://C:/... URIs unchanged.
+    if (is_drive_letter(uri[0]) && uri[1] == ':') return uri;
+
+    char *sep = uri;
+    while (*sep && *sep != '/' && *sep != '\\') sep++;
+
+    // file://hostname with no path: treat as UNC host.
+    if (!*sep) {
+        if (!is_localhost_host(uri, strlen(uri))) *file_is_unc = true;
+        return uri;
+    }
+
+    size_t host_len = (size_t)(sep - uri);
+    if (host_len == 0) {
+        // file:///path...
+        uri = sep;
+    } else if (is_localhost_host(uri, host_len)) {
+        // file://localhost/path...
+        uri = sep;
+    } else {
+        // file://server/share...
+        *file_is_unc = true;
+    }
+
+    // file:///C:/... -> C:/... (Windows drive path)
+    if ((uri[0] == '/' || uri[0] == '\\') && is_drive_letter(uri[1]) && uri[2] == ':')
+        uri++;
+
+    return uri;
+}
+
 static int read_utf16_line(FILE *f, char *out, size_t out_sz, bool le) {
     if (!out || out_sz == 0) return 0;
     size_t idx = 0;
@@ -442,13 +506,8 @@ bool retro_load_game(const struct retro_game_info *g) {
             // Handle file:// URIs
             bool file_is_unc = false;
             if (strncasecmp_simple(trimmed, "file://", 7) == 0) {
-                trimmed += 7;
-                if (strncasecmp_simple(trimmed, "localhost/", 10) == 0 || strncasecmp_simple(trimmed, "localhost\\", 10) == 0)
-                    trimmed += 10;
-                if (trimmed[0] == '/' && is_drive_letter(trimmed[1]) && trimmed[2] == ':')
-                    trimmed++;
-                else if (trimmed[0] != '/' && !is_drive_letter(trimmed[0]))
-                    file_is_unc = true;
+                trimmed = file_uri_path_start(trimmed + 7, &file_is_unc);
+                percent_decode_inplace(trimmed);
             }
 
             // Fix backslashes for standard C file handling
