@@ -20,7 +20,9 @@ static bool fft_window_ready = false;
 static float fft_re[FFT_SIZE] = {0};
 static float fft_im[FFT_SIZE] = {0};
 static float fft_band_energy[MAX_VIZ_BANDS] = {0};
-static float fft_auto_gain = 24.0f;
+static float fft_noise_floor[MAX_VIZ_BANDS] = {0};
+static float fft_auto_gain = 10.0f;
+static float fft_ref_level = 0.020f;
 
 static int viz_band_x(int band_idx, int band_count, int item_w, int start_x, int spacing) {
     if (!cfg.responsive) return start_x + (band_idx * spacing);
@@ -131,13 +133,21 @@ static void fft_update_levels(const int16_t *audio_buf, int samples_per_frame, i
         return;
     }
 
+    float mono_samples[FFT_SIZE];
+    float dc_sum = 0.0f;
     for (int i = 0; i < FFT_SIZE; i++) {
         int src_frame = (i < available_frames) ? i : (available_frames - 1);
         int src = src_frame * 2;
         int32_t left = audio_buf[src];
         int32_t right = audio_buf[src + 1];
         float mono = (float)(left + right) * (0.5f / 32768.0f);
-        fft_re[i] = mono * fft_window[i];
+        mono_samples[i] = mono;
+        dc_sum += mono;
+    }
+
+    float dc_bias = dc_sum / (float)FFT_SIZE;
+    for (int i = 0; i < FFT_SIZE; i++) {
+        fft_re[i] = (mono_samples[i] - dc_bias) * fft_window[i];
         fft_im[i] = 0.0f;
     }
 
@@ -146,7 +156,7 @@ static void fft_update_levels(const int16_t *audio_buf, int samples_per_frame, i
     const int max_bin = FFT_SIZE / 2 - 1;
     const float nyquist = (float)OUT_RATE * 0.5f;
     const float max_freq = nyquist * FFT_MAX_FREQ_RATIO;
-    float frame_max = 0.0f;
+    float sum_sq = 0.0f;
 
     for (int i = 0; i < band_count; i++) {
         float t0 = (float)i / (float)band_count;
@@ -173,32 +183,46 @@ static void fft_update_levels(const int16_t *audio_buf, int samples_per_frame, i
         }
         if (bins > 0) energy /= (float)bins;
 
-        // Slightly emphasize lower bands for a classic graphic-EQ look.
-        float low_boost = 1.15f - (0.35f * t0);
-        if (low_boost < 0.75f) low_boost = 0.75f;
-        energy *= low_boost;
+        // Slightly counter the natural low-frequency dominance so bars move more evenly.
+        float tilt = 0.92f + (0.22f * t0);
+        energy *= tilt;
 
-        fft_band_energy[i] = energy;
-        if (energy > frame_max) frame_max = energy;
+        // Track a slow per-band floor and remove it to avoid pinned bars in quiet material.
+        float floor = fft_noise_floor[i];
+        if (floor <= 0.0f) floor = energy * 0.20f;
+        if (energy < floor) floor = floor * 0.96f + energy * 0.04f;
+        else floor = floor * 0.9995f + energy * 0.0005f;
+        fft_noise_floor[i] = floor;
+
+        float cleaned = energy - (floor * 0.70f);
+        if (cleaned < 0.0f) cleaned = 0.0f;
+        fft_band_energy[i] = cleaned;
+        sum_sq += cleaned * cleaned;
     }
 
-    if (frame_max < 0.000001f) frame_max = 0.000001f;
-    float target_gain = 0.90f / frame_max;
+    float frame_rms = sqrtf(sum_sq / (float)band_count);
+    if (frame_rms > fft_ref_level) fft_ref_level = fft_ref_level * 0.90f + frame_rms * 0.10f;
+    else fft_ref_level = fft_ref_level * 0.992f + frame_rms * 0.008f;
+    if (fft_ref_level < 0.0003f) fft_ref_level = 0.0003f;
+
+    float target_gain = 0.22f / fft_ref_level;
     if (target_gain < 1.0f) target_gain = 1.0f;
-    if (target_gain > 140.0f) target_gain = 140.0f;
-    fft_auto_gain = fft_auto_gain * 0.95f + target_gain * 0.05f;
+    if (target_gain > 36.0f) target_gain = 36.0f;
+    if (target_gain < fft_auto_gain) fft_auto_gain = fft_auto_gain * 0.75f + target_gain * 0.25f;
+    else fft_auto_gain = fft_auto_gain * 0.97f + target_gain * 0.03f;
 
     for (int i = 0; i < band_count; i++) {
-        float p = fft_band_energy[i] * fft_auto_gain;
+        float scaled = fft_band_energy[i] * fft_auto_gain;
+        float db = 20.0f * log10f(scaled + 0.000001f);
+        float p = (db + 52.0f) / 46.0f;
         if (p < 0.0f) p = 0.0f;
         if (p > 1.0f) p = 1.0f;
-        p = powf(p, 0.62f);
 
-        if (p > viz_levels[i]) viz_levels[i] = viz_levels[i] * 0.40f + p * 0.60f;
-        else viz_levels[i] = viz_levels[i] * 0.88f + p * 0.12f;
+        if (p > viz_levels[i]) viz_levels[i] = viz_levels[i] * 0.50f + p * 0.50f;
+        else viz_levels[i] = viz_levels[i] * 0.90f + p * 0.10f;
 
-        if (p > viz_peaks[i]) {
-            viz_peaks[i] = p;
+        if (viz_levels[i] > viz_peaks[i]) {
+            viz_peaks[i] = viz_levels[i];
             viz_peak_timers[i] = cfg.viz_peak_hold;
         } else if (viz_peak_timers[i] > 0) {
             viz_peak_timers[i]--;
@@ -211,6 +235,7 @@ static void fft_update_levels(const int16_t *audio_buf, int samples_per_frame, i
         viz_levels[i] *= 0.85f;
         if (viz_peak_timers[i] > 0) viz_peak_timers[i]--;
         else viz_peaks[i] *= 0.95f;
+        fft_noise_floor[i] *= 0.995f;
     }
 }
 
