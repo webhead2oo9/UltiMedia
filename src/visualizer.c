@@ -2,11 +2,25 @@
 #include "video.h"
 #include "config.h"
 #include "layout.h"
+#include "audio.h"
+#include <math.h>
 #include <stdlib.h>
 
 float viz_levels[MAX_VIZ_BANDS] = {0};
 float viz_peaks[MAX_VIZ_BANDS] = {0};
 int viz_peak_timers[MAX_VIZ_BANDS] = {0};
+
+#define FFT_SIZE 512
+#define TWO_PI_F 6.28318530717958647692f
+#define FFT_MIN_FREQ 35.0f
+#define FFT_MAX_FREQ_RATIO 0.92f
+
+static float fft_window[FFT_SIZE] = {0};
+static bool fft_window_ready = false;
+static float fft_re[FFT_SIZE] = {0};
+static float fft_im[FFT_SIZE] = {0};
+static float fft_band_energy[MAX_VIZ_BANDS] = {0};
+static float fft_auto_gain = 24.0f;
 
 static int viz_band_x(int band_idx, int band_count, int item_w, int start_x, int spacing) {
     if (!cfg.responsive) return start_x + (band_idx * spacing);
@@ -38,17 +52,183 @@ uint16_t get_gradient_color(float level) {
     }
 }
 
+static void viz_decay_levels(int band_count) {
+    for (int i = 0; i < band_count; i++) {
+        viz_levels[i] *= 0.85f;
+        if (viz_peak_timers[i] > 0) viz_peak_timers[i]--;
+        else viz_peaks[i] *= 0.95f;
+    }
+}
+
+static void fft_prepare_window(void) {
+    if (fft_window_ready) return;
+    for (int i = 0; i < FFT_SIZE; i++) {
+        fft_window[i] = 0.5f - 0.5f * cosf((TWO_PI_F * (float)i) / (float)(FFT_SIZE - 1));
+    }
+    fft_window_ready = true;
+}
+
+static void fft_compute(float *re, float *im, int n) {
+    for (int i = 1, j = 0; i < n; i++) {
+        int bit = n >> 1;
+        while (j & bit) {
+            j ^= bit;
+            bit >>= 1;
+        }
+        j ^= bit;
+        if (i < j) {
+            float tr = re[i];
+            re[i] = re[j];
+            re[j] = tr;
+            float ti = im[i];
+            im[i] = im[j];
+            im[j] = ti;
+        }
+    }
+
+    for (int len = 2; len <= n; len <<= 1) {
+        int half = len >> 1;
+        float ang = -TWO_PI_F / (float)len;
+        float wlen_cos = cosf(ang);
+        float wlen_sin = sinf(ang);
+
+        for (int i = 0; i < n; i += len) {
+            float w_cos = 1.0f;
+            float w_sin = 0.0f;
+            for (int j = 0; j < half; j++) {
+                int u = i + j;
+                int v = i + j + half;
+
+                float vr = re[v] * w_cos - im[v] * w_sin;
+                float vi = re[v] * w_sin + im[v] * w_cos;
+                float ur = re[u];
+                float ui = im[u];
+
+                re[u] = ur + vr;
+                im[u] = ui + vi;
+                re[v] = ur - vr;
+                im[v] = ui - vi;
+
+                float next_cos = w_cos * wlen_cos - w_sin * wlen_sin;
+                w_sin = w_cos * wlen_sin + w_sin * wlen_cos;
+                w_cos = next_cos;
+            }
+        }
+    }
+}
+
+static void fft_update_levels(const int16_t *audio_buf, int samples_per_frame, int band_count) {
+    if (!audio_buf || samples_per_frame <= 0) {
+        viz_decay_levels(band_count);
+        return;
+    }
+
+    fft_prepare_window();
+
+    int available_frames = samples_per_frame;
+    if (available_frames < 1) {
+        viz_decay_levels(band_count);
+        return;
+    }
+
+    for (int i = 0; i < FFT_SIZE; i++) {
+        int src_frame = (i < available_frames) ? i : (available_frames - 1);
+        int src = src_frame * 2;
+        int32_t left = audio_buf[src];
+        int32_t right = audio_buf[src + 1];
+        float mono = (float)(left + right) * (0.5f / 32768.0f);
+        fft_re[i] = mono * fft_window[i];
+        fft_im[i] = 0.0f;
+    }
+
+    fft_compute(fft_re, fft_im, FFT_SIZE);
+
+    const int max_bin = FFT_SIZE / 2 - 1;
+    const float nyquist = (float)OUT_RATE * 0.5f;
+    const float max_freq = nyquist * FFT_MAX_FREQ_RATIO;
+    float frame_max = 0.0f;
+
+    for (int i = 0; i < band_count; i++) {
+        float t0 = (float)i / (float)band_count;
+        float t1 = (float)(i + 1) / (float)band_count;
+        float f0 = FFT_MIN_FREQ * powf(max_freq / FFT_MIN_FREQ, t0);
+        float f1 = FFT_MIN_FREQ * powf(max_freq / FFT_MIN_FREQ, t1);
+        int b0 = (int)(f0 * (float)FFT_SIZE / (float)OUT_RATE);
+        int b1 = (int)(f1 * (float)FFT_SIZE / (float)OUT_RATE);
+
+        if (b0 < 1) b0 = 1;
+        if (b1 < 1) b1 = 1;
+        if (b0 > max_bin) b0 = max_bin;
+        if (b1 > max_bin) b1 = max_bin;
+        if (b1 < b0) b1 = b0;
+
+        float energy = 0.0f;
+        int bins = 0;
+        for (int b = b0; b <= b1; b++) {
+            float real = fft_re[b];
+            float imag = fft_im[b];
+            float mag = sqrtf(real * real + imag * imag) * (2.0f / (float)FFT_SIZE);
+            energy += mag;
+            bins++;
+        }
+        if (bins > 0) energy /= (float)bins;
+
+        // Slightly emphasize lower bands for a classic graphic-EQ look.
+        float low_boost = 1.15f - (0.35f * t0);
+        if (low_boost < 0.75f) low_boost = 0.75f;
+        energy *= low_boost;
+
+        fft_band_energy[i] = energy;
+        if (energy > frame_max) frame_max = energy;
+    }
+
+    if (frame_max < 0.000001f) frame_max = 0.000001f;
+    float target_gain = 0.90f / frame_max;
+    if (target_gain < 1.0f) target_gain = 1.0f;
+    if (target_gain > 140.0f) target_gain = 140.0f;
+    fft_auto_gain = fft_auto_gain * 0.95f + target_gain * 0.05f;
+
+    for (int i = 0; i < band_count; i++) {
+        float p = fft_band_energy[i] * fft_auto_gain;
+        if (p < 0.0f) p = 0.0f;
+        if (p > 1.0f) p = 1.0f;
+        p = powf(p, 0.62f);
+
+        if (p > viz_levels[i]) viz_levels[i] = viz_levels[i] * 0.40f + p * 0.60f;
+        else viz_levels[i] = viz_levels[i] * 0.88f + p * 0.12f;
+
+        if (p > viz_peaks[i]) {
+            viz_peaks[i] = p;
+            viz_peak_timers[i] = cfg.viz_peak_hold;
+        } else if (viz_peak_timers[i] > 0) {
+            viz_peak_timers[i]--;
+        } else {
+            viz_peaks[i] *= 0.95f;
+        }
+    }
+
+    for (int i = band_count; i < MAX_VIZ_BANDS; i++) {
+        viz_levels[i] *= 0.85f;
+        if (viz_peak_timers[i] > 0) viz_peak_timers[i]--;
+        else viz_peaks[i] *= 0.95f;
+    }
+}
+
 void viz_update_levels(const int16_t *audio_buf, int samples_per_frame) {
-    int sample_stride = (cfg.viz_bands == 40) ? 20 : 40;
     int band_count = cfg.viz_bands;
+    if (band_count < 1) band_count = 1;
+    if (band_count > MAX_VIZ_BANDS) band_count = MAX_VIZ_BANDS;
+
+    if (cfg.viz_mode == VIZ_MODE_FFT_EQ) {
+        fft_update_levels(audio_buf, samples_per_frame, band_count);
+        return;
+    }
+
+    int sample_stride = (band_count == 40) ? 20 : 40;
     int total_samples = samples_per_frame * 2; // Interleaved stereo buffer
 
     if (!audio_buf || total_samples <= 0) {
-        for (int i = 0; i < band_count; i++) {
-            viz_levels[i] *= 0.85f;
-            if (viz_peak_timers[i] > 0) viz_peak_timers[i]--;
-            else viz_peaks[i] *= 0.95f;
-        }
+        viz_decay_levels(band_count);
         return;
     }
 
@@ -356,13 +536,13 @@ void viz_draw(void) {
     int band_count = cfg.viz_bands;
     if (cfg.responsive && (layout.viz.w <= 0 || layout.viz.h <= 0)) return;
 
-    if (cfg.viz_mode == 0) {
+    if (cfg.viz_mode == VIZ_MODE_BARS || cfg.viz_mode == VIZ_MODE_FFT_EQ) {
         draw_bars_mode(band_count);
-    } else if (cfg.viz_mode == 1) {
+    } else if (cfg.viz_mode == VIZ_MODE_DOTS) {
         draw_dots_mode(band_count);
-    } else if (cfg.viz_mode == 2) {
+    } else if (cfg.viz_mode == VIZ_MODE_LINE) {
         draw_line_mode(band_count);
-    } else if (cfg.viz_mode == 3 && vu_audio_buf) {
+    } else if (cfg.viz_mode == VIZ_MODE_VU && vu_audio_buf) {
         draw_vu_meter_mode(vu_audio_buf, vu_samples_per_frame);
     }
 }

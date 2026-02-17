@@ -99,13 +99,14 @@ void config_update(retro_environment_t environ_cb) {
 
     const char *viz_mode_value = get_var_value(environ_cb, "media_viz_mode");
     if (viz_mode_value) {
-        if (!strcmp(viz_mode_value, "Bars")) cfg.viz_mode = 0;
-        else if (!strcmp(viz_mode_value, "VU Meter")) cfg.viz_mode = 3;
-        else if (!strcmp(viz_mode_value, "Dots")) cfg.viz_mode = 1;
-        else if (!strcmp(viz_mode_value, "Line")) cfg.viz_mode = 2;
-        else cfg.viz_mode = 0;
+        if (!strcmp(viz_mode_value, "Bars")) cfg.viz_mode = VIZ_MODE_BARS;
+        else if (!strcmp(viz_mode_value, "FFT EQ")) cfg.viz_mode = VIZ_MODE_FFT_EQ;
+        else if (!strcmp(viz_mode_value, "VU Meter")) cfg.viz_mode = VIZ_MODE_VU;
+        else if (!strcmp(viz_mode_value, "Dots")) cfg.viz_mode = VIZ_MODE_DOTS;
+        else if (!strcmp(viz_mode_value, "Line")) cfg.viz_mode = VIZ_MODE_LINE;
+        else cfg.viz_mode = VIZ_MODE_BARS;
     } else {
-        cfg.viz_mode = 0;
+        cfg.viz_mode = VIZ_MODE_BARS;
     }
 
     cfg.viz_gradient = get_bool_var(environ_cb, "media_viz_gradient", true);
@@ -131,7 +132,7 @@ void config_declare_variables(retro_environment_t cb) {
         { "media_viz_y", "Viz Y; 140|80|200" }, { "media_bar_y", "Bar Y; 180|100|210" },
         { "media_tim_y", "Time Y; 190|110|220" }, { "media_ico_y", "Icon Y; 20|50|200" },
         { "media_viz_bands", "Viz Bands; 40|20" },
-        { "media_viz_mode", "Viz Mode; Bars|VU Meter|Dots|Line" },
+        { "media_viz_mode", "Viz Mode; Bars|FFT EQ|VU Meter|Dots|Line" },
         { "media_viz_gradient", "Viz Gradient; On|Off" },
         { "media_viz_peak_hold", "Peak Hold; 30|0|15|45|60" },
         { "media_use_filename", "Track Text Mode; Show ID|Show filename with extension|Show Filename without extension" },

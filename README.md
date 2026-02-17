@@ -16,13 +16,13 @@ A LibRetro audio player core for EmuVR/RetroArch that plays playlists with album
 - Read `M3U` playlists (UTF-8 and UTF-16)
 - Parse metadata from MP3, OGG, and FLAC tags
 - Show album art from nearby image files or embedded artwork
-- Display 4 visualizer modes: `Bars`, `VU Meter`, `Dots`, `Line`
+- Display 5 visualizer modes: `Bars`, `FFT EQ`, `VU Meter`, `Dots`, `Line`
 - Auto-arrange UI with responsive layout bounds
 
 ## Controls
 
 - `B`: Pause/Play
-- `X`: Cycle visualizer mode (`Bars -> VU Meter -> Dots -> Line`)
+- `X`: Cycle visualizer mode (`Bars -> FFT EQ -> VU Meter -> Dots -> Line`)
 - `L` / `R`: Previous / Next track
 - `LEFT` / `RIGHT`: Seek backward / forward
 - `Y`: Toggle shuffle
@@ -50,7 +50,7 @@ When a track loads, art is searched in this order:
 
 ### Visualizer
 
-- Viz Mode: `Bars`, `VU Meter`, `Dots`, `Line`
+- Viz Mode: `Bars`, `FFT EQ`, `VU Meter`, `Dots`, `Line`
 - Viz Bands: `20` or `40`
 - Viz Gradient: `On/Off`
 - Peak Hold: `0` to `60` (default `30`)

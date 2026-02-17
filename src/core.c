@@ -42,10 +42,11 @@ static int ff_rw_dir = 0;
 static void open_track(int idx);
 
 static int next_viz_mode(int mode) {
-    if (mode == 0) return 3; // Bars -> VU Meter
-    if (mode == 3) return 1; // VU Meter -> Dots
-    if (mode == 1) return 2; // Dots -> Line
-    return 0; // Line/unknown -> Bars
+    if (mode == VIZ_MODE_BARS) return VIZ_MODE_FFT_EQ; // Bars -> FFT EQ
+    if (mode == VIZ_MODE_FFT_EQ) return VIZ_MODE_VU;   // FFT EQ -> VU Meter
+    if (mode == VIZ_MODE_VU) return VIZ_MODE_DOTS;     // VU Meter -> Dots
+    if (mode == VIZ_MODE_DOTS) return VIZ_MODE_LINE;   // Dots -> Line
+    return VIZ_MODE_BARS;                               // Line/unknown -> Bars
 }
 
 static void draw_rect_outline(int x, int y, int w, int h, uint16_t color) {

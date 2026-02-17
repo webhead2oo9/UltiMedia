@@ -10,6 +10,14 @@ typedef enum {
     SHOW_ID = 2
 } TrackTextMode;
 
+typedef enum {
+    VIZ_MODE_BARS = 0,
+    VIZ_MODE_DOTS = 1,
+    VIZ_MODE_LINE = 2,
+    VIZ_MODE_VU = 3,
+    VIZ_MODE_FFT_EQ = 4
+} VizMode;
+
 // Configuration structure for all UI and display options
 typedef struct {
     uint16_t bg_rgb, fg_rgb;
