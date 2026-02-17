@@ -1,61 +1,100 @@
-# Music Playlist Core
+# UltiMedia (Music Playlist Core)
 
-A LibRetro audio player for EmuVR. Plays music with album artwork, visualizers, and scrolling track info on a virtual screen.
+A LibRetro audio player core for EmuVR/RetroArch that plays playlists with album art, scrolling track text, and visualizers.
 
 **Originally created by KrisRetro**
 
-## Installation
+## Quick Start
 
 1. Download `music_playlist_libretro.dll` from [Releases](../../releases)
-2. Place it in your EmuVR `cores` folder
-3. Load an M3U playlist or audio file
+2. Place it in your `cores` folder
+3. Load an `.m3u` playlist (or a single audio file)
+
+## What It Can Do
+
+- Play `MP3`, `OGG`, `FLAC`, and `WAV`
+- Read `M3U` playlists (UTF-8 and UTF-16)
+- Parse metadata from MP3, OGG, and FLAC tags
+- Show album art from nearby image files or embedded artwork
+- Display 4 visualizer modes: `Bars`, `VU Meter`, `Dots`, `Line`
+- Auto-arrange UI with responsive layout bounds
 
 ## Controls
 
-- `B` - Pause/Play
-- `X` - Cycle Viz Mode (Bars -> VU Meter -> Dots -> Line)
-- `L` / `R` - Previous / Next Track
-- `LEFT` / `RIGHT` - Seek backward / forward
-- `Y` - Toggle Shuffle
+- `B`: Pause/Play
+- `X`: Cycle visualizer mode (`Bars -> VU Meter -> Dots -> Line`)
+- `L` / `R`: Previous / Next track
+- `LEFT` / `RIGHT`: Seek backward / forward
+- `Y`: Toggle shuffle
 
-## Supported Formats
+## Album Art Search Order
 
-- **Audio:** MP3, OGG, FLAC, WAV
-- **Playlists:** M3U (UTF-8 and UTF-16)
+When a track loads, art is searched in this order:
 
-Place album art (`cover.png`, `cover.jpg`, or `folder.jpg`) in the same folder as your playlist.
+1. Same filename as the track (different image extension)
+2. Same name as the parent folder
+3. Same name as album metadata tag
+4. Same filename as the loaded `.m3u`
+5. Embedded image scan in the audio file
 
-## Core Options
+## Core Options (Easy Version)
 
-### Display Elements
-| Option | Description | Default |
-|--------|-------------|---------|
-| Show Art | Display album artwork | On |
-| Show Scroll Text | Scrolling track/artist info | On |
-| Show Visualizer | Audio visualization | On |
-| Show Progress Bar | Playback progress | On |
-| Show Time | Current/total time | On |
-| Show Icons | Playback state icons | On |
+### Display Toggles
 
-### Colors
-Background and foreground RGB values (0-255) for UI elements.
+- Show Art
+- Show Scroll Text
+- Show Visualizer
+- Show Progress Bar
+- Show Time
+- Show Icons
 
 ### Visualizer
-| Option | Values | Default |
-|--------|--------|---------|
-| Viz Mode | Bars, VU Meter, Dots, Line | Bars |
-| Viz Bands | 20, 40 | 40 |
-| Viz Gradient | On/Off | On |
-| Peak Hold | 0-60 frames | 30 |
 
-### Position Offsets
-Adjust Y position of each element (Art, Text, Viz, Bar, Time, Icons) to customize layout.
+- Viz Mode: `Bars`, `VU Meter`, `Dots`, `Line`
+- Viz Bands: `20` or `40`
+- Viz Gradient: `On/Off`
+- Peak Hold: `0` to `60` (default `30`)
 
-### Other
-| Option | Description | Default |
-|--------|-------------|---------|
-| Responsive Layout | Auto-place art and UI by usable aspect ratio | On |
-| Track Text Mode | Show ID, Show filename with extension, Show Filename without extension | Show ID |
+### Track Text
+
+- Track Text Mode:
+  - `Show ID` (metadata when available)
+  - `Show filename with extension`
+  - `Show Filename without extension`
+
+### Responsive Layout
+
+- Responsive Layout: `On/Off` (default `On`)
+- UI Top / Bottom / Left / Right (%): defines the usable screen region
+- Debug Layout Bounds: `Off/On`
+  - Draws colored layout boxes to help tune responsive positioning
+
+### Manual Y Offsets (mainly for non-responsive mode)
+
+- Art Y
+- Text Y
+- Viz Y
+- Bar Y
+- Time Y
+- Icon Y
+
+### Colors
+
+- BG Red / Green / Blue
+- FG Red / Green / Blue
+
+All color channels are `0-255`.
+
+## Notes for Playlists
+
+- Relative paths are recommended for portability
+- Absolute paths also work if valid on the current machine
+- `file://` playlist entries are supported
+
+## Compatibility
+
+- Designed for LibRetro frontends (RetroArch/EmuVR)
+- Intended to work on RetroArch `1.7.5` and newer
 
 ## License
 
