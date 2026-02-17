@@ -5,6 +5,36 @@
 
 Config cfg;
 
+static const char *get_var_value(retro_environment_t environ_cb, const char *key) {
+    struct retro_variable var = {0};
+    var.key = key;
+    if (environ_cb && environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value && var.value[0])
+        return var.value;
+    return NULL;
+}
+
+static int get_int_var(retro_environment_t environ_cb, const char *key, int fallback) {
+    const char *value = get_var_value(environ_cb, key);
+    return value ? atoi(value) : fallback;
+}
+
+static bool parse_on_off(const char *value, bool fallback) {
+    if (!value) return fallback;
+    if (!strcmp(value, "On") || !strcmp(value, "on") ||
+        !strcmp(value, "1") || !strcmp(value, "true") || !strcmp(value, "True") ||
+        !strcmp(value, "Enabled") || !strcmp(value, "enabled"))
+        return true;
+    if (!strcmp(value, "Off") || !strcmp(value, "off") ||
+        !strcmp(value, "0") || !strcmp(value, "false") || !strcmp(value, "False") ||
+        !strcmp(value, "Disabled") || !strcmp(value, "disabled"))
+        return false;
+    return fallback;
+}
+
+static bool get_bool_var(retro_environment_t environ_cb, const char *key, bool fallback) {
+    return parse_on_off(get_var_value(environ_cb, key), fallback);
+}
+
 static TrackTextMode parse_track_text_mode(const char *value) {
     if (!value) return SHOW_ID;
     if (!strcmp(value, "Show filename with extension") || !strcmp(value, "On"))
@@ -15,49 +45,54 @@ static TrackTextMode parse_track_text_mode(const char *value) {
 }
 
 void config_update(retro_environment_t environ_cb) {
-    struct retro_variable var = {0};
     int r, g, b;
 
-    var.key = "media_bg_r"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) r = atoi(var.value); else r=0;
-    var.key = "media_bg_g"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) g = atoi(var.value); else g=64;
-    var.key = "media_bg_b"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) b = atoi(var.value); else b=0;
+    r = get_int_var(environ_cb, "media_bg_r", 0);
+    g = get_int_var(environ_cb, "media_bg_g", 64);
+    b = get_int_var(environ_cb, "media_bg_b", 0);
     cfg.bg_rgb = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
 
-    var.key = "media_fg_r"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) r = atoi(var.value); else r=0;
-    var.key = "media_fg_g"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) g = atoi(var.value); else g=255;
-    var.key = "media_fg_b"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) b = atoi(var.value); else b=0;
+    r = get_int_var(environ_cb, "media_fg_r", 0);
+    g = get_int_var(environ_cb, "media_fg_g", 255);
+    b = get_int_var(environ_cb, "media_fg_b", 0);
     cfg.fg_rgb = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
 
-    var.key = "media_show_art"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.show_art = !strcmp(var.value, "On"); else cfg.show_art = true;
-    var.key = "media_show_txt"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.show_txt = !strcmp(var.value, "On"); else cfg.show_txt = true;
-    var.key = "media_show_viz"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.show_viz = !strcmp(var.value, "On"); else cfg.show_viz = true;
-    var.key = "media_show_bar"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.show_bar = !strcmp(var.value, "On"); else cfg.show_bar = true;
-    var.key = "media_show_tim"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.show_tim = !strcmp(var.value, "On"); else cfg.show_tim = true;
-    var.key = "media_show_ico"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.show_ico = !strcmp(var.value, "On"); else cfg.show_ico = true;
-    var.key = "media_responsive"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.responsive = !strcmp(var.value, "On"); else cfg.responsive = true;
-    var.key = "media_art_y"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.art_y = atoi(var.value); else cfg.art_y = 40;
-    var.key = "media_txt_y"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.txt_y = atoi(var.value); else cfg.txt_y = 150;
-    var.key = "media_viz_y"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.viz_y = atoi(var.value); else cfg.viz_y = 140;
-    var.key = "media_bar_y"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.bar_y = atoi(var.value); else cfg.bar_y = 180;
-    var.key = "media_tim_y"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.tim_y = atoi(var.value); else cfg.tim_y = 190;
-    var.key = "media_ico_y"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.ico_y = atoi(var.value); else cfg.ico_y = 20;
-    var.key = "media_ui_top"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.ui_top = atoi(var.value); else cfg.ui_top = 20;
-    var.key = "media_ui_bottom"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.ui_bottom = atoi(var.value); else cfg.ui_bottom = 80;
-    var.key = "media_ui_left"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.ui_left = atoi(var.value); else cfg.ui_left = 10;
-    var.key = "media_ui_right"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.ui_right = atoi(var.value); else cfg.ui_right = 90;
+    cfg.show_art = get_bool_var(environ_cb, "media_show_art", true);
+    cfg.show_txt = get_bool_var(environ_cb, "media_show_txt", true);
+    cfg.show_viz = get_bool_var(environ_cb, "media_show_viz", true);
+    cfg.show_bar = get_bool_var(environ_cb, "media_show_bar", true);
+    cfg.show_tim = get_bool_var(environ_cb, "media_show_tim", true);
+    cfg.show_ico = get_bool_var(environ_cb, "media_show_ico", true);
+    cfg.responsive = get_bool_var(environ_cb, "media_responsive", true);
+    cfg.art_y = get_int_var(environ_cb, "media_art_y", 40);
+    cfg.txt_y = get_int_var(environ_cb, "media_txt_y", 150);
+    cfg.viz_y = get_int_var(environ_cb, "media_viz_y", 140);
+    cfg.bar_y = get_int_var(environ_cb, "media_bar_y", 180);
+    cfg.tim_y = get_int_var(environ_cb, "media_tim_y", 190);
+    cfg.ico_y = get_int_var(environ_cb, "media_ico_y", 20);
+    cfg.ui_top = get_int_var(environ_cb, "media_ui_top", 20);
+    cfg.ui_bottom = get_int_var(environ_cb, "media_ui_bottom", 80);
+    cfg.ui_left = get_int_var(environ_cb, "media_ui_left", 10);
+    cfg.ui_right = get_int_var(environ_cb, "media_ui_right", 90);
 
-    var.key = "media_viz_bands"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.viz_bands = atoi(var.value); else cfg.viz_bands = 40;
+    cfg.viz_bands = get_int_var(environ_cb, "media_viz_bands", 40);
     if (cfg.viz_bands < 1) cfg.viz_bands = 1;
     if (cfg.viz_bands > MAX_VIZ_BANDS) cfg.viz_bands = MAX_VIZ_BANDS;
-    var.key = "media_viz_mode"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) {
-        if (!strcmp(var.value, "Bars")) cfg.viz_mode = 0;
-        else if (!strcmp(var.value, "VU Meter")) cfg.viz_mode = 3;
-        else if (!strcmp(var.value, "Dots")) cfg.viz_mode = 1;
-        else if (!strcmp(var.value, "Line")) cfg.viz_mode = 2;
-    } else cfg.viz_mode = 0;
-    var.key = "media_viz_gradient"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.viz_gradient = !strcmp(var.value, "On"); else cfg.viz_gradient = true;
-    var.key = "media_viz_peak_hold"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.viz_peak_hold = atoi(var.value); else cfg.viz_peak_hold = 30;
-    var.key = "media_use_filename"; if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) cfg.track_text_mode = parse_track_text_mode(var.value); else cfg.track_text_mode = SHOW_ID;
+
+    const char *viz_mode_value = get_var_value(environ_cb, "media_viz_mode");
+    if (viz_mode_value) {
+        if (!strcmp(viz_mode_value, "Bars")) cfg.viz_mode = 0;
+        else if (!strcmp(viz_mode_value, "VU Meter")) cfg.viz_mode = 3;
+        else if (!strcmp(viz_mode_value, "Dots")) cfg.viz_mode = 1;
+        else if (!strcmp(viz_mode_value, "Line")) cfg.viz_mode = 2;
+        else cfg.viz_mode = 0;
+    } else {
+        cfg.viz_mode = 0;
+    }
+
+    cfg.viz_gradient = get_bool_var(environ_cb, "media_viz_gradient", true);
+    cfg.viz_peak_hold = get_int_var(environ_cb, "media_viz_peak_hold", 30);
+    cfg.track_text_mode = parse_track_text_mode(get_var_value(environ_cb, "media_use_filename"));
 }
 
 void config_declare_variables(retro_environment_t cb) {
