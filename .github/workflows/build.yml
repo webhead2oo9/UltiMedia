@@ -2,11 +2,101 @@ name: Build & Release
 
 on:
   push:
-    paths: ['src/**']
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - '.github/workflows/**'
   pull_request:
   workflow_dispatch:
 
 jobs:
+  native-tests:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: deps
+          key: deps-v2
+
+      - name: Fetch dependencies
+        shell: bash
+        run: |
+          mkdir -p deps
+          [ -f deps/libretro.h ] || curl -sL -o deps/libretro.h \
+            https://raw.githubusercontent.com/libretro/RetroArch/v1.7.5/libretro-common/include/libretro.h
+          [ -f deps/dr_mp3.h ] || curl -sL -o deps/dr_mp3.h \
+            https://raw.githubusercontent.com/mackron/dr_libs/master/dr_mp3.h
+          [ -f deps/dr_wav.h ] || curl -sL -o deps/dr_wav.h \
+            https://raw.githubusercontent.com/mackron/dr_libs/master/dr_wav.h
+          [ -f deps/dr_flac.h ] || curl -sL -o deps/dr_flac.h \
+            https://raw.githubusercontent.com/mackron/dr_libs/master/dr_flac.h
+          [ -f deps/stb_image.h ] || curl -sL -o deps/stb_image.h \
+            https://raw.githubusercontent.com/nothings/stb/master/stb_image.h
+          [ -f deps/stb_vorbis.c ] || curl -sL -o deps/stb_vorbis.c \
+            https://raw.githubusercontent.com/nothings/stb/master/stb_vorbis.c
+
+      - name: Setup MSYS2
+        if: matrix.os == 'windows-latest'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          install: mingw-w64-ucrt-x86_64-gcc python
+
+      - name: Run native tests (macOS/Linux)
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: python3 tests/run_tests.py
+
+      - name: Run native tests (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: msys2 {0}
+        run: python3 tests/run_tests.py
+
+  static-analysis:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: deps
+          key: deps-v2
+
+      - name: Fetch dependencies
+        shell: bash
+        run: |
+          mkdir -p deps
+          [ -f deps/libretro.h ] || curl -sL -o deps/libretro.h \
+            https://raw.githubusercontent.com/libretro/RetroArch/v1.7.5/libretro-common/include/libretro.h
+          [ -f deps/dr_mp3.h ] || curl -sL -o deps/dr_mp3.h \
+            https://raw.githubusercontent.com/mackron/dr_libs/master/dr_mp3.h
+          [ -f deps/dr_wav.h ] || curl -sL -o deps/dr_wav.h \
+            https://raw.githubusercontent.com/mackron/dr_libs/master/dr_wav.h
+          [ -f deps/dr_flac.h ] || curl -sL -o deps/dr_flac.h \
+            https://raw.githubusercontent.com/mackron/dr_libs/master/dr_flac.h
+          [ -f deps/stb_image.h ] || curl -sL -o deps/stb_image.h \
+            https://raw.githubusercontent.com/nothings/stb/master/stb_image.h
+          [ -f deps/stb_vorbis.c ] || curl -sL -o deps/stb_vorbis.c \
+            https://raw.githubusercontent.com/nothings/stb/master/stb_vorbis.c
+
+      - name: Run clang analyzer
+        shell: bash
+        run: |
+          clang --analyze -std=c99 -I./deps -I./src \
+            src/core.c src/audio.c src/video.c src/visualizer.c \
+            src/metadata.c src/config.c src/layout.c
+
   build:
     runs-on: windows-latest
     defaults:
@@ -47,8 +137,8 @@ jobs:
       - name: Build DLL
         run: |
           gcc -shared -O2 -I./deps -I./src -o music_playlist_libretro.dll \
-            src/core.c src/audio.c src/video.c src/visualizer.c \
-            src/metadata.c src/config.c src/layout.c -lm
+            src/core.c src/audio.c src/audio_codecs.c src/video.c src/visualizer.c \
+            src/metadata.c src/image_codecs.c src/config.c src/layout.c -lm
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -57,7 +147,7 @@ jobs:
           path: music_playlist_libretro.dll
 
   release:
-    needs: build
+    needs: [build, native-tests]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

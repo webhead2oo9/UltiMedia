@@ -16,6 +16,12 @@
 #include "metadata.h"
 #include "visualizer.h"
 
+#define CORE_MAX_TRACKS 256
+#define CORE_MAX_PATH 1024
+#define CORE_STATE_MAGIC 0x554D5354u
+#define CORE_STATE_VERSION 2u
+#define CORE_DEFAULT_SEED 0xA341316Cu
+
 // LibRetro callbacks
 static retro_environment_t environ_cb;
 static retro_video_refresh_t video_cb;
@@ -24,10 +30,10 @@ static retro_input_poll_t input_poll_cb;
 static retro_input_state_t input_state_cb;
 
 // Playlist state
-static char *tracks[256];
+static char *tracks[CORE_MAX_TRACKS];
 static int track_count = 0;
 static int current_idx = 0;
-static char m3u_base_path[1024] = {0};
+static char m3u_base_path[CORE_MAX_PATH] = {0};
 
 // UI state
 static int scroll_x = 320;
@@ -37,15 +43,79 @@ static bool is_shuffle = false;
 static char time_str[32];
 static int ff_rw_icon_timer = 0;
 static int ff_rw_dir = 0;
+static bool config_needs_refresh = true;
+static uint32_t shuffle_seed = 0;
+static uint32_t shuffle_state = 0;
+static int shuffle_order[CORE_MAX_TRACKS] = {0};
+static int shuffle_count = 0;
+static int shuffle_pos = 0;
+static int shuffle_history[CORE_MAX_TRACKS] = {0};
+static int shuffle_history_count = 0;
+static int shuffle_history_pos = 0;
+
+static const struct retro_input_descriptor input_descriptors[] = {
+    {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B, "Pause/Play"},
+    {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X, "Cycle Visualizer"},
+    {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L, "Previous Track"},
+    {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R, "Next Track"},
+    {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT, "Seek Backward 3 Seconds"},
+    {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT, "Seek Forward 3 Seconds"},
+    {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y, "Toggle Shuffle"},
+    {0},
+};
+
+typedef struct {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t content_hash;
+    uint32_t track_count;
+    int32_t current_idx;
+    int32_t viz_mode;
+    int32_t scroll_x;
+    int32_t debounce;
+    int32_t ff_rw_icon_timer;
+    int32_t ff_rw_dir;
+    uint8_t is_paused;
+    uint8_t is_shuffle;
+    uint8_t reserved[2];
+    uint32_t shuffle_seed;
+    uint32_t shuffle_state;
+    uint32_t shuffle_count;
+    uint32_t shuffle_pos;
+    uint32_t shuffle_history_count;
+    uint32_t shuffle_history_pos;
+    AudioStateSnapshot audio;
+    int32_t shuffle_order[CORE_MAX_TRACKS];
+    int32_t shuffle_history[CORE_MAX_TRACKS];
+    uint32_t m3u_base_path_len;
+    uint32_t track_path_lens[CORE_MAX_TRACKS];
+} CoreStateSnapshot;
 
 // Forward declarations
 static void open_track(int idx);
+static void clear_shuffle_state(void);
+static void reset_runtime_state(bool preserve_shuffle_mode);
+static size_t serialized_state_size(void);
+static void open_next_track(void);
+static void open_previous_track(void);
 
 static int next_viz_mode(int mode) {
-    if (mode == 0) return 3; // Bars -> VU Meter
-    if (mode == 3) return 1; // VU Meter -> Dots
-    if (mode == 1) return 2; // Dots -> Line
-    return 0; // Line/unknown -> Bars
+    if (mode == VIZ_MODE_BARS || mode == VIZ_MODE_FFT_EQ_LEGACY) return VIZ_MODE_VU; // Bars -> VU Meter
+    if (mode == VIZ_MODE_VU) return VIZ_MODE_DOTS;                                     // VU Meter -> Dots
+    if (mode == VIZ_MODE_DOTS) return VIZ_MODE_LINE;                                   // Dots -> Line
+    return VIZ_MODE_BARS;                                                               // Line/unknown -> Bars
+}
+
+static int is_valid_viz_mode(int mode) {
+    return mode == VIZ_MODE_BARS ||
+           mode == VIZ_MODE_FFT_EQ_LEGACY ||
+           mode == VIZ_MODE_VU ||
+           mode == VIZ_MODE_DOTS ||
+           mode == VIZ_MODE_LINE;
+}
+
+static int normalize_viz_mode(int mode) {
+    return (mode == VIZ_MODE_FFT_EQ_LEGACY) ? VIZ_MODE_BARS : mode;
 }
 
 static void draw_rect_outline(int x, int y, int w, int h, uint16_t color) {
@@ -228,6 +298,320 @@ static int is_absolute_path(const char *p) {
     return 0;
 }
 
+static int copy_cstr_fixed(char *dest, size_t dest_sz, const char *src) {
+    if (!dest || dest_sz == 0 || !src) return 0;
+    size_t len = strlen(src);
+    if (len >= dest_sz) return 0;
+    memcpy(dest, src, len + 1);
+    return 1;
+}
+
+static char *core_strdup(const char *src) {
+    if (!src) return NULL;
+    size_t len = strlen(src) + 1;
+    char *copy = (char*)malloc(len);
+    if (!copy) return NULL;
+    memcpy(copy, src, len);
+    return copy;
+}
+
+static void free_tracks(void) {
+    for (int i = 0; i < track_count; i++) {
+        if (tracks[i]) {
+            free(tracks[i]);
+            tracks[i] = NULL;
+        }
+    }
+    track_count = 0;
+}
+
+static uint32_t hash_bytes(uint32_t hash, const void *data, size_t len) {
+    const unsigned char *bytes = (const unsigned char*)data;
+    for (size_t i = 0; i < len; i++) {
+        hash ^= bytes[i];
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+static uint32_t hash_cstr(uint32_t hash, const char *s) {
+    return hash_bytes(hash, s, strlen(s) + 1);
+}
+
+static uint32_t current_content_hash(void) {
+    uint32_t hash = 2166136261u;
+    hash = hash_bytes(hash, &track_count, sizeof(track_count));
+    hash = hash_cstr(hash, m3u_base_path);
+    for (int i = 0; i < track_count; i++) {
+        if (!tracks[i]) continue;
+        hash = hash_cstr(hash, tracks[i]);
+    }
+    return hash ? hash : CORE_DEFAULT_SEED;
+}
+
+static uint32_t sanitize_seed(uint32_t seed) {
+    return seed ? seed : CORE_DEFAULT_SEED;
+}
+
+static uint32_t generate_shuffle_seed(void) {
+    uint32_t seed = current_content_hash();
+    seed ^= (uint32_t)time(NULL);
+    seed ^= (uint32_t)clock();
+    return sanitize_seed(seed);
+}
+
+static uint32_t next_shuffle_random(void) {
+    uint32_t x = sanitize_seed(shuffle_state);
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    shuffle_state = sanitize_seed(x);
+    return shuffle_state;
+}
+
+static void clear_shuffle_state(void) {
+    shuffle_seed = 0;
+    shuffle_state = 0;
+    shuffle_count = 0;
+    shuffle_pos = 0;
+    memset(shuffle_order, 0, sizeof(shuffle_order));
+    shuffle_history_count = 0;
+    shuffle_history_pos = 0;
+    memset(shuffle_history, 0, sizeof(shuffle_history));
+}
+
+static int normalize_track_index(int idx) {
+    if (track_count <= 0) return 0;
+    return (idx + track_count) % track_count;
+}
+
+static void seed_shuffle_history(int idx) {
+    if (track_count <= 0) {
+        shuffle_history_count = 0;
+        shuffle_history_pos = 0;
+        return;
+    }
+
+    shuffle_history_count = 1;
+    shuffle_history_pos = 0;
+    shuffle_history[0] = normalize_track_index(idx);
+}
+
+static void ensure_shuffle_history_current(void) {
+    if (!is_shuffle || track_count <= 0) return;
+    if (shuffle_history_count <= 0 ||
+        shuffle_history_pos < 0 ||
+        shuffle_history_pos >= shuffle_history_count ||
+        shuffle_history[shuffle_history_pos] != current_idx) {
+        seed_shuffle_history(current_idx);
+    }
+}
+
+static void append_shuffle_history(int idx) {
+    if (track_count <= 0) return;
+
+    int normalized = normalize_track_index(idx);
+    ensure_shuffle_history_current();
+
+    if (shuffle_history_count > 0 && shuffle_history_pos < shuffle_history_count - 1)
+        shuffle_history_count = shuffle_history_pos + 1;
+
+    if (shuffle_history_count >= CORE_MAX_TRACKS) {
+        memmove(&shuffle_history[0],
+                &shuffle_history[1],
+                (size_t)(CORE_MAX_TRACKS - 1) * sizeof(shuffle_history[0]));
+        shuffle_history_count = CORE_MAX_TRACKS - 1;
+        if (shuffle_history_pos > 0) shuffle_history_pos--;
+    }
+
+    shuffle_history[shuffle_history_count++] = normalized;
+    shuffle_history_pos = shuffle_history_count - 1;
+}
+
+static void rebuild_shuffle_order(void) {
+    shuffle_count = track_count;
+    shuffle_pos = 0;
+    for (int i = 0; i < shuffle_count; i++) shuffle_order[i] = i;
+    for (int i = shuffle_count - 1; i > 0; i--) {
+        int j = (int)(next_shuffle_random() % (uint32_t)(i + 1));
+        int tmp = shuffle_order[i];
+        shuffle_order[i] = shuffle_order[j];
+        shuffle_order[j] = tmp;
+    }
+}
+
+static void start_shuffle_cycle(uint32_t seed) {
+    shuffle_seed = sanitize_seed(seed);
+    shuffle_state = shuffle_seed;
+    rebuild_shuffle_order();
+}
+
+static void sync_shuffle_to_current_track(void) {
+    if (!is_shuffle || shuffle_count <= 0) return;
+    if (shuffle_count == 1) {
+        shuffle_order[0] = current_idx;
+        shuffle_pos = 0;
+        return;
+    }
+
+    for (int attempt = 0; attempt < 4; attempt++) {
+        int found = -1;
+        for (int i = 0; i < shuffle_count; i++) {
+            if (shuffle_order[i] == current_idx) {
+                found = i;
+                break;
+            }
+        }
+        if (found < 0) {
+            start_shuffle_cycle(next_shuffle_random());
+            continue;
+        }
+        if (found != shuffle_count - 1) {
+            int current_track = shuffle_order[found];
+            memmove(&shuffle_order[found],
+                    &shuffle_order[found + 1],
+                    (size_t)(shuffle_count - found - 1) * sizeof(shuffle_order[0]));
+            shuffle_order[shuffle_count - 1] = current_track;
+        }
+        if (shuffle_order[shuffle_count - 1] == current_idx) {
+            shuffle_pos = 0;
+            return;
+        }
+        start_shuffle_cycle(next_shuffle_random());
+    }
+
+    shuffle_pos = 0;
+}
+
+static void ensure_shuffle_ready(void) {
+    if (track_count <= 0) return;
+    if (shuffle_count == track_count && shuffle_seed != 0) return;
+    start_shuffle_cycle(shuffle_seed ? shuffle_seed : current_content_hash());
+    sync_shuffle_to_current_track();
+}
+
+static int next_track_index(void) {
+    if (track_count == 0) return 0;
+    if (!is_shuffle || track_count <= 1) return current_idx + 1;
+
+    ensure_shuffle_ready();
+    for (int guard = 0; guard < CORE_MAX_TRACKS * 2; guard++) {
+        if (shuffle_pos >= shuffle_count) {
+            start_shuffle_cycle(next_shuffle_random());
+            sync_shuffle_to_current_track();
+        }
+        if (shuffle_count <= 0) break;
+        int next_idx = shuffle_order[shuffle_pos++];
+        if (track_count == 1 || next_idx != current_idx) return next_idx;
+    }
+
+    return current_idx + 1;
+}
+
+static void open_next_track(void) {
+    if (track_count == 0) return;
+    if (!is_shuffle || track_count <= 1) {
+        open_track(current_idx + 1);
+        return;
+    }
+
+    ensure_shuffle_ready();
+    ensure_shuffle_history_current();
+
+    if (shuffle_history_pos + 1 < shuffle_history_count) {
+        shuffle_history_pos++;
+        open_track(shuffle_history[shuffle_history_pos]);
+        return;
+    }
+
+    int next_idx = next_track_index();
+    append_shuffle_history(next_idx);
+    open_track(next_idx);
+}
+
+static void open_previous_track(void) {
+    if (track_count == 0) return;
+    if (!is_shuffle || track_count <= 1) {
+        open_track(current_idx - 1);
+        return;
+    }
+
+    ensure_shuffle_ready();
+    ensure_shuffle_history_current();
+
+    if (shuffle_history_pos > 0) {
+        shuffle_history_pos--;
+        open_track(shuffle_history[shuffle_history_pos]);
+        return;
+    }
+
+    open_track(current_idx - 1);
+    ensure_shuffle_ready();
+    sync_shuffle_to_current_track();
+    seed_shuffle_history(current_idx);
+}
+
+static void reset_runtime_state(bool preserve_shuffle_mode) {
+    scroll_x = FB_WIDTH;
+    debounce = 0;
+    is_paused = false;
+    if (!preserve_shuffle_mode) is_shuffle = false;
+    time_str[0] = '\0';
+    ff_rw_icon_timer = 0;
+    ff_rw_dir = 0;
+    config_needs_refresh = true;
+    clear_shuffle_state();
+    viz_reset_state();
+}
+
+static int add_serialized_size(size_t *total, size_t add) {
+    if (!total || add > SIZE_MAX - *total) return 0;
+    *total += add;
+    return 1;
+}
+
+static size_t serialized_state_size(void) {
+    size_t total = sizeof(CoreStateSnapshot);
+    if (!add_serialized_size(&total, strlen(m3u_base_path) + 1)) return 0;
+
+    for (int i = 0; i < track_count; i++) {
+        if (!tracks[i]) return 0;
+        if (!add_serialized_size(&total, strlen(tracks[i]) + 1)) return 0;
+    }
+
+    return total;
+}
+
+static int validate_loaded_content(const CoreStateSnapshot *state, size_t serialized_size) {
+    if (!state) return 0;
+    if (state->track_count == 0 || state->track_count > CORE_MAX_TRACKS) return 0;
+    if ((uint32_t)track_count != state->track_count) return 0;
+    if (serialized_size < sizeof(CoreStateSnapshot)) return 0;
+
+    const char *cursor = (const char*)(state + 1);
+    const char *end = (const char*)state + serialized_size;
+
+    if (state->m3u_base_path_len == 0) return 0;
+    if ((size_t)(end - cursor) < state->m3u_base_path_len) return 0;
+    if (cursor[state->m3u_base_path_len - 1] != '\0') return 0;
+    if (strlen(m3u_base_path) + 1 != state->m3u_base_path_len) return 0;
+    if (memcmp(m3u_base_path, cursor, state->m3u_base_path_len) != 0) return 0;
+    cursor += state->m3u_base_path_len;
+
+    for (uint32_t i = 0; i < state->track_count; i++) {
+        uint32_t path_len = state->track_path_lens[i];
+        if (path_len == 0) return 0;
+        if ((size_t)(end - cursor) < path_len) return 0;
+        if (cursor[path_len - 1] != '\0') return 0;
+        if (!tracks[i]) return 0;
+        if (strlen(tracks[i]) + 1 != path_len) return 0;
+        if (memcmp(tracks[i], cursor, path_len) != 0) return 0;
+        cursor += path_len;
+    }
+
+    return state->content_hash == current_content_hash();
+}
+
 static void open_track(int idx) {
     if (track_count == 0) return;
 
@@ -246,6 +630,8 @@ static void open_track(int idx) {
         snprintf(display_str, sizeof(display_str), "UNSUPPORTED CHANNELS: %d", source_channels);
         return;
     }
+
+    viz_reset_state();
 
     // Load metadata and album art
     metadata_load(p, m3u_base_path, cfg.track_text_mode);
@@ -268,14 +654,10 @@ static void refresh_config_and_layout(void) {
     }
 }
 
-// External declaration for viz_set_audio_for_vu
-void viz_set_audio_for_vu(const int16_t *audio_buf, int samples_per_frame);
-
 void retro_run(void) {
-    static bool first_run = true;
-    if (first_run) {
+    if (config_needs_refresh) {
         refresh_config_and_layout();
-        first_run = false;
+        config_needs_refresh = false;
     } else {
         bool updated = false;
         if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated)
@@ -301,15 +683,26 @@ void retro_run(void) {
 
     if (debounce > 0) debounce--;
     else {
-        if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y)) { is_shuffle = !is_shuffle; debounce = 20; }
+        if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y)) {
+            is_shuffle = !is_shuffle;
+            if (is_shuffle) {
+                ensure_shuffle_ready();
+                sync_shuffle_to_current_track();
+                seed_shuffle_history(current_idx);
+            } else {
+                shuffle_history_count = 0;
+                shuffle_history_pos = 0;
+            }
+            debounce = 20;
+        }
         if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B)) { is_paused = !is_paused; debounce = 20; }
         if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X)) {
             cfg.viz_mode = next_viz_mode(cfg.viz_mode);
             if (cfg.responsive) layout_compute();
             debounce = 20;
         }
-        if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R)) { open_track(is_shuffle && track_count > 0 ? rand()%track_count : current_idx + 1); debounce = 20; }
-        if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L)) { open_track(current_idx - 1); debounce = 20; }
+        if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R)) { open_next_track(); debounce = 20; }
+        if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L)) { open_previous_track(); debounce = 20; }
     }
 
     // 2. Audio Core
@@ -319,13 +712,12 @@ void retro_run(void) {
         int samples = audio_read_frame(out_buf);
         if (samples == 0) {
             // End of track, go to next
-            open_track(is_shuffle && track_count > 0 ? rand()%track_count : current_idx + 1);
+            open_next_track();
         }
     }
 
     // 3. Visualizer & Audio Batch
     viz_update_levels(out_buf, SAMPLES_PER_FRAME);
-    viz_set_audio_for_vu(out_buf, SAMPLES_PER_FRAME);
     audio_batch_cb(out_buf, SAMPLES_PER_FRAME);
 
     // 4. Rendering Section
@@ -430,6 +822,7 @@ void retro_run(void) {
 void retro_set_environment(retro_environment_t cb) {
     environ_cb = cb;
     config_declare_variables(cb);
+    cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, (void*)input_descriptors);
     enum retro_pixel_format fmt = RETRO_PIXEL_FORMAT_RGB565;
     cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &fmt);
 }
@@ -437,16 +830,11 @@ void retro_set_environment(retro_environment_t cb) {
 bool retro_load_game(const struct retro_game_info *g) {
     if (!g || !g->path) return false;
 
-    // Free existing tracks before loading new ones
-    for (int i = 0; i < track_count; i++) {
-        if (tracks[i]) {
-            free(tracks[i]);
-            tracks[i] = NULL;
-        }
-    }
-    track_count = 0;
+    free_tracks();
+    current_idx = 0;
     m3u_base_path[0] = '\0';
-    char m3u_dir[1024] = {0};
+    reset_runtime_state(false);
+    char m3u_dir[CORE_MAX_PATH] = {0};
 
     // Check for M3U extension
     const char* ext = strrchr(g->path, '.');
@@ -461,7 +849,7 @@ bool retro_load_game(const struct retro_game_info *g) {
         bool m3u_utf16_le = false;
         bool m3u_utf16_be = false;
         detect_m3u_encoding(f, &m3u_utf16_le, &m3u_utf16_be);
-        strncpy(m3u_base_path, g->path, 1023);
+        strncpy(m3u_base_path, g->path, CORE_MAX_PATH - 1);
         m3u_base_path[sizeof(m3u_base_path) - 1] = '\0';
         const char* last = strrchr(g->path, '/');
         if (!last) last = strrchr(g->path, '\\');
@@ -474,8 +862,8 @@ bool retro_load_game(const struct retro_game_info *g) {
             strncpy(m3u_dir, ".", sizeof(m3u_dir) - 1);
             m3u_dir[sizeof(m3u_dir) - 1] = '\0';
         }
-        char line[1024];
-        while (read_m3u_line(f, line, sizeof(line), m3u_utf16_le, m3u_utf16_be) && track_count < 256) {
+        char line[CORE_MAX_PATH];
+        while (read_m3u_line(f, line, sizeof(line), m3u_utf16_le, m3u_utf16_be) && track_count < CORE_MAX_TRACKS) {
             // Clean the line aggressively
             line[strcspn(line, "\r\n")] = 0;
 
@@ -514,7 +902,7 @@ bool retro_load_game(const struct retro_game_info *g) {
             for (int i = 0; trimmed[i]; i++) {
                 if (trimmed[i] == '\\') trimmed[i] = '/';
             }
-            char resolved[1024];
+            char resolved[CORE_MAX_PATH];
             int written = 0;
             if (is_absolute_path(trimmed) || file_is_unc || !m3u_dir[0]) {
                 if (file_is_unc)
@@ -528,16 +916,26 @@ bool retro_load_game(const struct retro_game_info *g) {
             for (int i = 0; resolved[i]; i++) {
                 if (resolved[i] == '\\') resolved[i] = '/';
             }
-            tracks[track_count++] = strdup(resolved);
+            tracks[track_count] = core_strdup(resolved);
+            if (!tracks[track_count]) {
+                fclose(f);
+                free_tracks();
+                m3u_base_path[0] = '\0';
+                return false;
+            }
+            track_count++;
         }
         fclose(f);
     } else {
         // Single track logic
-        tracks[track_count++] = strdup(g->path);
+        tracks[track_count] = core_strdup(g->path);
+        if (!tracks[track_count]) return false;
+        track_count++;
     }
 
     if (track_count == 0) return false;
 
+    start_shuffle_cycle(generate_shuffle_seed());
     config_update(environ_cb);
     if (cfg.responsive)
         layout_compute();
@@ -549,14 +947,16 @@ bool retro_load_game(const struct retro_game_info *g) {
 void retro_init(void) {
     video_init();
     audio_init();
-    srand((unsigned int)time(NULL));
+    current_idx = 0;
+    m3u_base_path[0] = '\0';
+    reset_runtime_state(false);
 }
 
 void retro_deinit(void) {
     audio_deinit();
     video_deinit();
     metadata_free_art();
-    for (int i = 0; i < track_count; i++) free(tracks[i]);
+    free_tracks();
 }
 
 void retro_set_video_refresh(retro_video_refresh_t cb) { video_cb = cb; }
@@ -583,18 +983,153 @@ void retro_set_audio_sample(retro_audio_sample_t cb) { (void)cb; }
 void retro_unload_game(void) {
     audio_close();
     metadata_free_art();
-    for (int i = 0; i < track_count; i++) {
-        if (tracks[i]) {
-            free(tracks[i]);
-            tracks[i] = NULL;
-        }
-    }
-    track_count = 0;
+    free_tracks();
+    current_idx = 0;
+    m3u_base_path[0] = '\0';
+    reset_runtime_state(false);
 }
-void retro_reset(void) {}
-size_t retro_serialize_size(void) { return 0; }
-bool retro_serialize(void *d, size_t s) { (void)d; (void)s; return false; }
-bool retro_unserialize(const void *d, size_t s) { (void)d; (void)s; return false; }
+void retro_reset(void) {
+    if (track_count == 0 || current_idx < 0 || current_idx >= track_count || !tracks[current_idx]) {
+        reset_runtime_state(false);
+        return;
+    }
+
+    bool preserve_shuffle = is_shuffle;
+    uint32_t session_seed = shuffle_seed ? shuffle_seed : current_content_hash();
+    int restore_idx = current_idx;
+
+    reset_runtime_state(preserve_shuffle);
+    current_idx = restore_idx;
+    refresh_config_and_layout();
+    config_needs_refresh = false;
+
+    open_track(current_idx);
+    if (preserve_shuffle) {
+        start_shuffle_cycle(session_seed);
+        sync_shuffle_to_current_track();
+        seed_shuffle_history(current_idx);
+    }
+}
+
+size_t retro_serialize_size(void) { return serialized_state_size(); }
+
+bool retro_serialize(void *d, size_t s) {
+    size_t required_size = serialized_state_size();
+    if (!d || required_size == 0 || s < required_size || track_count <= 0 || current_idx < 0 || current_idx >= track_count)
+        return false;
+
+    CoreStateSnapshot state;
+    memset(&state, 0, sizeof(state));
+    state.magic = CORE_STATE_MAGIC;
+    state.version = CORE_STATE_VERSION;
+    state.content_hash = current_content_hash();
+    state.track_count = (uint32_t)track_count;
+    state.current_idx = current_idx;
+    state.viz_mode = normalize_viz_mode(cfg.viz_mode);
+    state.scroll_x = scroll_x;
+    state.debounce = debounce;
+    state.ff_rw_icon_timer = ff_rw_icon_timer;
+    state.ff_rw_dir = ff_rw_dir;
+    state.is_paused = is_paused ? 1u : 0u;
+    state.is_shuffle = is_shuffle ? 1u : 0u;
+    state.shuffle_seed = shuffle_seed ? shuffle_seed : current_content_hash();
+    state.shuffle_state = shuffle_state ? shuffle_state : state.shuffle_seed;
+    if (shuffle_count < 0 || shuffle_count > track_count) return false;
+    if (shuffle_pos < 0 || shuffle_pos > shuffle_count) return false;
+    if (shuffle_history_count < 0 || shuffle_history_count > CORE_MAX_TRACKS) return false;
+    if ((shuffle_history_count == 0 && shuffle_history_pos != 0) ||
+        (shuffle_history_count > 0 && (shuffle_history_pos < 0 || shuffle_history_pos >= shuffle_history_count)))
+        return false;
+    state.shuffle_count = (uint32_t)shuffle_count;
+    state.shuffle_pos = (uint32_t)shuffle_pos;
+    state.shuffle_history_count = (uint32_t)shuffle_history_count;
+    state.shuffle_history_pos = (uint32_t)shuffle_history_pos;
+    audio_capture_state(&state.audio);
+    state.m3u_base_path_len = (uint32_t)(strlen(m3u_base_path) + 1);
+
+    for (int i = 0; i < track_count; i++) {
+        if (!tracks[i]) return false;
+        state.track_path_lens[i] = (uint32_t)(strlen(tracks[i]) + 1);
+    }
+    for (int i = 0; i < shuffle_count; i++) state.shuffle_order[i] = shuffle_order[i];
+    for (int i = 0; i < shuffle_history_count; i++) state.shuffle_history[i] = shuffle_history[i];
+
+    memcpy(d, &state, sizeof(state));
+    char *cursor = (char*)d + sizeof(state);
+    memcpy(cursor, m3u_base_path, state.m3u_base_path_len);
+    cursor += state.m3u_base_path_len;
+    for (int i = 0; i < track_count; i++) {
+        memcpy(cursor, tracks[i], state.track_path_lens[i]);
+        cursor += state.track_path_lens[i];
+    }
+
+    return true;
+}
+
+bool retro_unserialize(const void *d, size_t s) {
+    if (!d || s < sizeof(CoreStateSnapshot)) return false;
+
+    const CoreStateSnapshot *state = (const CoreStateSnapshot*)d;
+    if (state->magic != CORE_STATE_MAGIC || state->version != CORE_STATE_VERSION) return false;
+    if (state->track_count == 0 || state->track_count > CORE_MAX_TRACKS) return false;
+    if (state->current_idx < 0 || state->current_idx >= (int32_t)state->track_count) return false;
+    if (!is_valid_viz_mode(state->viz_mode)) return false;
+    if (state->shuffle_count > state->track_count || state->shuffle_pos > state->shuffle_count) return false;
+    if (state->shuffle_history_count > CORE_MAX_TRACKS) return false;
+    if ((state->shuffle_history_count == 0 && state->shuffle_history_pos != 0) ||
+        (state->shuffle_history_count > 0 && state->shuffle_history_pos >= state->shuffle_history_count))
+        return false;
+    if (!validate_loaded_content(state, s)) return false;
+    for (uint32_t i = 0; i < state->shuffle_count; i++) {
+        if (state->shuffle_order[i] < 0 || state->shuffle_order[i] >= (int32_t)state->track_count)
+            return false;
+    }
+    for (uint32_t i = 0; i < state->shuffle_history_count; i++) {
+        if (state->shuffle_history[i] < 0 || state->shuffle_history[i] >= (int32_t)state->track_count)
+            return false;
+    }
+
+    AudioStateSnapshot previous_audio;
+    const char *previous_track = NULL;
+    bool had_current_track = current_idx >= 0 && current_idx < track_count && tracks[current_idx];
+    if (had_current_track) previous_track = tracks[current_idx];
+    audio_capture_state(&previous_audio);
+
+    if (!audio_restore_state(tracks[state->current_idx], &state->audio)) {
+        if (!audio_restore_state(previous_track, &previous_audio))
+            audio_close();
+        return false;
+    }
+
+    config_update(environ_cb);
+    cfg.viz_mode = normalize_viz_mode(state->viz_mode);
+    if (cfg.responsive) layout_compute();
+
+    reset_runtime_state(state->is_shuffle != 0);
+    current_idx = state->current_idx;
+    const char *serialized_m3u_base_path = (const char*)(state + 1);
+    if (!copy_cstr_fixed(m3u_base_path, sizeof(m3u_base_path), serialized_m3u_base_path)) return false;
+
+    metadata_load(tracks[current_idx], m3u_base_path, cfg.track_text_mode);
+    is_paused = state->is_paused != 0;
+    is_shuffle = state->is_shuffle != 0;
+    scroll_x = state->scroll_x;
+    debounce = state->debounce;
+    ff_rw_icon_timer = state->ff_rw_icon_timer;
+    ff_rw_dir = state->ff_rw_dir;
+    shuffle_seed = sanitize_seed(state->shuffle_seed ? state->shuffle_seed : current_content_hash());
+    shuffle_state = sanitize_seed(state->shuffle_state ? state->shuffle_state : shuffle_seed);
+    shuffle_count = (int)state->shuffle_count;
+    shuffle_pos = (int)state->shuffle_pos;
+    shuffle_history_count = (int)state->shuffle_history_count;
+    shuffle_history_pos = (int)state->shuffle_history_pos;
+    memset(shuffle_order, 0, sizeof(shuffle_order));
+    for (int i = 0; i < shuffle_count; i++) shuffle_order[i] = state->shuffle_order[i];
+    memset(shuffle_history, 0, sizeof(shuffle_history));
+    for (int i = 0; i < shuffle_history_count; i++) shuffle_history[i] = state->shuffle_history[i];
+    config_needs_refresh = false;
+    return true;
+}
 void retro_cheat_reset(void) {}
 void retro_cheat_set(unsigned i, bool e, const char *c) { (void)i; (void)e; (void)c; }
 void retro_set_controller_port_device(unsigned p, unsigned d) { (void)p; (void)d; }
@@ -602,3 +1137,12 @@ void* retro_get_memory_data(unsigned i) { (void)i; return NULL; }
 size_t retro_get_memory_size(unsigned i) { (void)i; return 0; }
 bool retro_load_game_special(unsigned t, const struct retro_game_info *g, size_t n) { (void)t; (void)g; (void)n; return false; }
 unsigned retro_get_region(void) { return RETRO_REGION_NTSC; }
+
+int core_debug_get_track_count(void) { return track_count; }
+int core_debug_get_current_index(void) { return current_idx; }
+bool core_debug_is_shuffle_enabled(void) { return is_shuffle; }
+bool core_debug_is_paused(void) { return is_paused; }
+const char *core_debug_get_current_track_path(void) {
+    if (current_idx < 0 || current_idx >= track_count) return NULL;
+    return tracks[current_idx];
+}

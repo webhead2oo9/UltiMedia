@@ -144,7 +144,7 @@ void layout_compute(void) {
                   (use_bar ? bar_h : 0) + (use_time ? time_h : 0) + viz_h;
     }
 
-    if (use_viz && cfg.viz_mode == 3) {
+    if (use_viz && cfg.viz_mode == VIZ_MODE_VU) {
         // VU meter includes 8px text labels; reserve a slightly taller compact block.
         const int vu_compact_h = 16;
         if (viz_h > vu_compact_h) {
@@ -164,7 +164,7 @@ void layout_compute(void) {
     int surplus = layout.content_h - used_h;
     int y = layout.content_y;
     if (use_viz) {
-        if (cfg.viz_mode == 3) {
+        if (cfg.viz_mode == VIZ_MODE_VU) {
             // Center the full stack instead of inflating VU mode's internal blank space.
             if (surplus > 0) y += surplus / 2;
         } else {

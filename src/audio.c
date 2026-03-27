@@ -2,13 +2,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define DR_MP3_IMPLEMENTATION
 #include "dr_mp3.h"
-#define DR_WAV_IMPLEMENTATION
 #include "dr_wav.h"
-#define DR_FLAC_IMPLEMENTATION
 #include "dr_flac.h"
-#include "stb_vorbis.c"
+#include "stb_vorbis_compat.h"
+
+#define AUDIO_STATE_SNAPSHOT_VERSION 1u
 
 // Global audio state
 AudioType current_type = AUDIO_NONE;
@@ -23,6 +22,23 @@ static double resample_phase = 0.0;
 static int16_t resample_in_buf[SAMPLES_PER_FRAME * 8 * MAX_CHANNELS];
 static int16_t resample_cache[RESAMPLE_CACHE_FRAMES * MAX_CHANNELS];
 static int resample_cache_frames = 0;
+
+static int clamp_resample_cache_frames(int frames) {
+    if (frames < 0) return 0;
+    if (frames > RESAMPLE_CACHE_FRAMES) return RESAMPLE_CACHE_FRAMES;
+    return frames;
+}
+
+static void audio_reset_state_fields(void) {
+    current_type = AUDIO_NONE;
+    source_rate = 0;
+    source_channels = 2;
+    total_frames = 0;
+    cur_frame = 0;
+    resample_phase = 0.0;
+    resample_cache_frames = 0;
+    memset(resample_cache, 0, sizeof(resample_cache));
+}
 
 // Case-insensitive string compare
 static int strcasecmp_simple(const char *s1, const char *s2) {
@@ -121,10 +137,8 @@ static void downmix_frame_lr(const int16_t *buf, int channels, int frame, float 
 }
 
 void audio_init(void) {
-    current_type = AUDIO_NONE;
     decoder = NULL;
-    resample_phase = 0.0;
-    resample_cache_frames = 0;
+    audio_reset_state_fields();
 }
 
 void audio_close(void) {
@@ -136,7 +150,7 @@ void audio_close(void) {
         if (current_type != AUDIO_OGG && current_type != AUDIO_FLAC) free(decoder);
         decoder = NULL;
     }
-    current_type = AUDIO_NONE;
+    audio_reset_state_fields();
 }
 
 void audio_deinit(void) {
@@ -206,6 +220,64 @@ bool audio_open_track(const char *path) {
     resample_cache_frames = 0;
     cur_frame = 0;
 
+    return true;
+}
+
+void audio_capture_state(AudioStateSnapshot *state) {
+    if (!state) return;
+
+    memset(state, 0, sizeof(*state));
+    state->version = AUDIO_STATE_SNAPSHOT_VERSION;
+    state->current_type = (uint32_t)current_type;
+    state->source_rate = source_rate;
+    state->source_channels = source_channels;
+    state->total_frames = total_frames;
+    state->cur_frame = cur_frame;
+    state->resample_phase = resample_phase;
+    state->resample_cache_frames = resample_cache_frames;
+    memcpy(state->resample_cache, resample_cache, sizeof(resample_cache));
+}
+
+bool audio_restore_state(const char *path, const AudioStateSnapshot *state) {
+    if (!state || state->version != AUDIO_STATE_SNAPSHOT_VERSION) return false;
+
+    int restored_cache_frames = clamp_resample_cache_frames(state->resample_cache_frames);
+
+    if ((AudioType)state->current_type == AUDIO_NONE) {
+        audio_close();
+        source_rate = state->source_rate;
+        source_channels = state->source_channels;
+        total_frames = state->total_frames;
+        cur_frame = state->cur_frame;
+        resample_phase = state->resample_phase;
+        resample_cache_frames = restored_cache_frames;
+        memcpy(resample_cache, state->resample_cache, sizeof(resample_cache));
+        return true;
+    }
+
+    if (!path || !audio_open_track(path)) return false;
+    uint64_t resume_frame = state->cur_frame;
+    if ((uint64_t)restored_cache_frames > UINT64_MAX - resume_frame) {
+        audio_close();
+        return false;
+    }
+    resume_frame += (uint64_t)restored_cache_frames;
+    if (current_type != (AudioType)state->current_type ||
+        source_rate != state->source_rate ||
+        source_channels != state->source_channels ||
+        total_frames != state->total_frames ||
+        state->cur_frame > total_frames ||
+        resume_frame > total_frames) {
+        audio_close();
+        return false;
+    }
+
+    audio_seek(resume_frame);
+    cur_frame = state->cur_frame;
+    resample_phase = state->resample_phase;
+    resample_cache_frames = restored_cache_frames;
+    memset(resample_cache, 0, sizeof(resample_cache));
+    memcpy(resample_cache, state->resample_cache, sizeof(resample_cache));
     return true;
 }
 

@@ -99,13 +99,14 @@ void config_update(retro_environment_t environ_cb) {
 
     const char *viz_mode_value = get_var_value(environ_cb, "media_viz_mode");
     if (viz_mode_value) {
-        if (!strcmp(viz_mode_value, "Bars")) cfg.viz_mode = 0;
-        else if (!strcmp(viz_mode_value, "VU Meter")) cfg.viz_mode = 3;
-        else if (!strcmp(viz_mode_value, "Dots")) cfg.viz_mode = 1;
-        else if (!strcmp(viz_mode_value, "Line")) cfg.viz_mode = 2;
-        else cfg.viz_mode = 0;
+        if (!strcmp(viz_mode_value, "Bars")) cfg.viz_mode = VIZ_MODE_BARS;
+        else if (!strcmp(viz_mode_value, "FFT EQ")) cfg.viz_mode = VIZ_MODE_BARS;
+        else if (!strcmp(viz_mode_value, "VU Meter")) cfg.viz_mode = VIZ_MODE_VU;
+        else if (!strcmp(viz_mode_value, "Dots")) cfg.viz_mode = VIZ_MODE_DOTS;
+        else if (!strcmp(viz_mode_value, "Line")) cfg.viz_mode = VIZ_MODE_LINE;
+        else cfg.viz_mode = VIZ_MODE_BARS;
     } else {
-        cfg.viz_mode = 0;
+        cfg.viz_mode = VIZ_MODE_BARS;
     }
 
     cfg.viz_gradient = get_bool_var(environ_cb, "media_viz_gradient", true);

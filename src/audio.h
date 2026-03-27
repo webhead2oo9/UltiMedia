@@ -10,6 +10,18 @@
 
 typedef enum { AUDIO_NONE, AUDIO_MP3, AUDIO_WAV, AUDIO_OGG, AUDIO_FLAC } AudioType;
 
+typedef struct {
+    uint32_t version;
+    uint32_t current_type;
+    uint32_t source_rate;
+    int32_t source_channels;
+    uint64_t total_frames;
+    uint64_t cur_frame;
+    double resample_phase;
+    int32_t resample_cache_frames;
+    int16_t resample_cache[RESAMPLE_CACHE_FRAMES * MAX_CHANNELS];
+} AudioStateSnapshot;
+
 // Audio state (exposed for core.c coordination)
 extern AudioType current_type;
 extern void *decoder;
@@ -36,6 +48,12 @@ void audio_seek(uint64_t frame);
 
 // Close current decoder
 void audio_close(void);
+
+// Capture the current decode/resampler state
+void audio_capture_state(AudioStateSnapshot *state);
+
+// Reopen a track and restore decode/resampler state
+bool audio_restore_state(const char *path, const AudioStateSnapshot *state);
 
 // Clamp float to int16
 int16_t clamp_i16(float v);

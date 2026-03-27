@@ -4,21 +4,8 @@
 #include <string.h>
 #include <stdint.h>
 #include "dr_flac.h"
-
-#define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
-
-typedef struct stb_vorbis stb_vorbis;
-typedef struct stb_vorbis_alloc stb_vorbis_alloc;
-typedef struct {
-   char *vendor;
-   int comment_list_length;
-   char **comment_list;
-} stb_vorbis_comment;
-
-extern stb_vorbis *stb_vorbis_open_filename(const char *filename, int *error, const stb_vorbis_alloc *alloc);
-extern void stb_vorbis_close(stb_vorbis *f);
-extern stb_vorbis_comment stb_vorbis_get_comment(stb_vorbis *f);
+#include "stb_vorbis_compat.h"
 
 uint16_t *art_buffer = NULL;
 int art_w_src = 0, art_h_src = 0;
@@ -295,12 +282,21 @@ static void metadata_build_display(const char *track_path, TrackTextMode track_t
                     char tag[3];
                     size_t r = fread(tag, 1, 3, f);
                     if (r == 3 && strncmp(tag, "TAG", 3) == 0) {
-                        fread(meta_title, 1, 30, f);
-                        fread(meta_artist, 1, 30, f);
-                        fread(cur_album, 1, 30, f);
-                        meta_title[30] = '\0';
-                        meta_artist[30] = '\0';
-                        cur_album[30] = '\0';
+                        unsigned char id3v1_data[125] = {0};
+                        char id3v1_title[31] = {0};
+                        char id3v1_artist[31] = {0};
+                        char id3v1_album[31] = {0};
+
+                        size_t data_read = fread(id3v1_data, 1, sizeof(id3v1_data), f);
+
+                        if (data_read >= 90) {
+                            memcpy(id3v1_title, id3v1_data, 30);
+                            memcpy(id3v1_artist, id3v1_data + 30, 30);
+                            memcpy(id3v1_album, id3v1_data + 60, 30);
+                            memcpy(meta_title, id3v1_title, sizeof(id3v1_title));
+                            memcpy(meta_artist, id3v1_artist, sizeof(id3v1_artist));
+                            memcpy(cur_album, id3v1_album, sizeof(id3v1_album));
+                        }
                     }
                 }
                 fclose(f);
@@ -433,11 +429,13 @@ void metadata_load(const char *track_path, const char *m3u_base_path, TrackTextM
     // Prepare for Rendering (RGB565)
     if (img_data) {
         if (art_w_src > 0 && art_h_src > 0 && art_w_src <= 4096 && art_h_src <= 4096) {
-            size_t art_size = (size_t)art_w_src * art_h_src * 2;
+            size_t pixel_count = (size_t)art_w_src * (size_t)art_h_src;
+            size_t art_size = pixel_count * sizeof(*art_buffer);
             art_buffer = malloc(art_size);
             if (art_buffer) {
-                for (int i = 0; i < art_w_src * art_h_src; i++) {
-                    uint8_t r = img_data[i*3], g = img_data[i*3+1], b = img_data[i*3+2];
+                for (size_t i = 0; i < pixel_count; i++) {
+                    const unsigned char *pixel = img_data + (i * 3);
+                    uint8_t r = pixel[0], g = pixel[1], b = pixel[2];
                     art_buffer[i] = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
                 }
             }

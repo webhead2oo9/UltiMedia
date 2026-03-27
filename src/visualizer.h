@@ -18,5 +18,5 @@ void viz_draw(void);
 // Get gradient color based on level (0.0 - 1.0)
 uint16_t get_gradient_color(float level);
 
-// Set audio buffer for VU meter mode (called before viz_draw)
-void viz_set_audio_for_vu(const int16_t *audio_buf, int samples_per_frame);
+// Reset internal visualizer state after load/reset/restore
+void viz_reset_state(void);
