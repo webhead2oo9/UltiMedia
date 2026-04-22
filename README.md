@@ -1,5 +1,7 @@
 # UltiMedia (Music Playlist Core)
 
+![UltiMedia logo](branding/logo.png)
+
 A LibRetro audio player core for RetroArch and EmuVR that plays `.m3u` playlists and standalone audio files with album art, scrolling track text, responsive layout, shuffle, and save-state-aware playback.
 
 **Originally created by KrisRetro**
