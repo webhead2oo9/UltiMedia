@@ -1,4 +1,8 @@
 deps/
 music_playlist_libretro.dylib
 music_playlist_libretro.dll
+music_playlist_libretro.so
 localscripts/
+
+# clang --analyze artifacts
+*.plist

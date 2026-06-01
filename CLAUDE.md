@@ -1,69 +1,74 @@
-# UltiMedia - Claude Code Guidelines
+# UltiMedia — Claude Code Guidelines
 
-## Project Overview
+Guidance for working on UltiMedia with Claude Code. This is the agent-facing companion to [`CONTRIBUTING.md`](CONTRIBUTING.md) (human-facing) — the two overlap, so **if you change a build, test, or style convention, update both.**
 
-UltiMedia is a LibRetro-based audio player and music visualizer that runs as a core plugin in frontends like RetroArch and EmuVR. It plays `.m3u` playlists and standalone `MP3`, `OGG`, `FLAC`, and `WAV` files, and renders album artwork, scrolling track info, visualizers, playback controls, shuffle state, and save-state-aware playback on a 320x240 display.
+## Project overview
 
-## Architecture
+UltiMedia is a LibRetro audio player and music visualizer that runs as a core plugin in frontends like RetroArch and EmuVR. It plays `.m3u` playlists and standalone `MP3`, `OGG`, `FLAC`, and `WAV` files, rendering album artwork, scrolling track info, visualizers, playback controls, shuffle state, and save-state-aware playback on a fixed **320×240, RGB565** display.
 
-**Modular C codebase** in `src/`:
-- `core.c` - LibRetro callbacks, playlist loading, runtime state, shuffle flow, save/load state
-- `audio.c` - Audio decoding, resampling, and decoder snapshot restore
-- `audio_codecs.c` - Third-party audio decoder implementations (`dr_*` and `stb_vorbis`)
-- `video.c` - Framebuffer and display
-- `visualizer.c` - Audio visualizations (`Bars`, `VU Meter`, `Dots`, `Line`)
-- `metadata.c` - Track metadata parsing and album art lookup/loading
-- `image_codecs.c` - Third-party image decoder implementation (`stb_image`)
-- `stb_vorbis_compat.h` - Shared Vorbis declarations used by `audio.c` and `metadata.c`
-- `config.c` - LibRetro core options
-- `layout.c` - Responsive UI layout computation
+## Quick reference
 
-**Test and contributor support**:
-- `tests/core_harness.c` - Native LibRetro harness for playback/state/navigation checks
-- `tests/run_tests.py` - Fixture generation + harness compile/run entry point
-- `tests/SMOKE_CHECKLIST.md` - Manual frontend verification checklist
-- `scripts/setup-windows.ps1` / `test-windows.ps1` / `build-windows.ps1` - Windows contributor wrappers around the MSYS2 UCRT64 path
+| | |
+|---|---|
+| Language | C99 |
+| Shipped artifact | `music_playlist_libretro.dll` (Windows LibRetro core) |
+| Display | 320×240, RGB565 |
+| Audio | 48000 Hz output, 800 samples/frame |
+| Run tests | `python3 tests/run_tests.py` |
+| LibRetro API | RetroArch `1.7.5` header |
 
-**Fetched third-party dependencies**:
-- `libretro.h` - LibRetro core API
-- `dr_mp3.h` / `dr_wav.h` / `dr_flac.h` - Audio decoders (Dr. Libs)
-- `stb_image.h` - Image loading
-- `stb_vorbis.c` - OGG Vorbis decoder
+## Repository layout
 
-**Output:** `music_playlist_libretro.dll` (Windows DLL for LibRetro)
+**Source (`src/`)** — modular C, one responsibility per file:
 
-## Code Style
+| File | Responsibility |
+|---|---|
+| `core.c` | LibRetro callbacks, playlist loading, runtime state, shuffle flow, save/load state |
+| `audio.c` | Audio decoding, resampling, decoder snapshot restore |
+| `audio_codecs.c` | Third-party audio decoder implementations (`dr_*`, `stb_vorbis`) |
+| `video.c` | Framebuffer and display |
+| `visualizer.c` | Visualizations: Bars, VU Meter, Dots, Line |
+| `metadata.c` | Track metadata parsing and album-art lookup/loading |
+| `image_codecs.c` | Third-party image decoder implementation (`stb_image`) |
+| `config.c` | LibRetro core options (declare + read) |
+| `layout.c` | Responsive UI layout computation |
+| `stb_vorbis_compat.h` | Shared Vorbis declarations used by `audio.c` and `metadata.c` |
+| `*.h` | Module interfaces; `core_debug.h` exposes state accessors for the test harness, `core_log.h` the shared diagnostic logger |
 
-- C99 standard
-- 4-space indentation
-- Static globals for state (this is a LibRetro core, not a library)
-- Inline comments for non-obvious logic
-- Keep functions focused and under 50 lines when practical
-- Use `uint16_t` for RGB565 framebuffer operations
-- Use `int16_t` for audio sample buffers
+**Tests & contributor tooling**
+- `tests/run_tests.py` — generates WAV/`.m3u` fixtures, compiles the native harness, runs it
+- `tests/core_harness.c` — native LibRetro harness for playback/state/navigation checks
+- `tests/SMOKE_CHECKLIST.md` — manual frontend verification checklist
+- `scripts/setup-windows.ps1` / `test-windows.ps1` / `build-windows.ps1` — Windows (MSYS2 UCRT64) wrappers; `windows-common.ps1` holds shared helpers
 
-## Key Constants
+**Project metadata & docs**
+- `music_playlist_libretro.info` — frontend core metadata; **keep in sync with actual capabilities** (e.g. `input_descriptors`, `savestate`, supported extensions)
+- `emuvr_override_custom.cfg` — EmuVR per-folder frontend overrides
+- `README.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, `LICENSE` (MIT)
+- `.github/workflows/` — CI (`build.yml`) plus Claude automation (`claude.yml`, `claude-code-review.yml`); `.github/ISSUE_TEMPLATE/` and `PULL_REQUEST_TEMPLATE.md`
 
-```c
-#define OUT_RATE 48000          // Fixed output sample rate
-#define SAMPLES_PER_FRAME 800   // Audio samples per video frame
+**Third-party dependencies** — fetched into a gitignored `deps/` on demand, **not** vendored:
+
+| Header | Source | Pin |
+|---|---|---|
+| `libretro.h` | libretro/RetroArch | `v1.7.5` |
+| `dr_mp3.h`, `dr_wav.h`, `dr_flac.h` | mackron/dr_libs | `master` |
+| `stb_image.h`, `stb_vorbis.c` | nothings/stb | `master` |
+
+## Build, test & dependencies
+
+Dependencies are not committed — they're fetched into `deps/` before building.
+
+**Windows (preferred contributor path)** — checked-in PowerShell wrappers (assume MSYS2 at `C:\msys64`):
+
+```powershell
+.\scripts\setup-windows.ps1   # install UCRT64 packages + fetch deps
+.\scripts\test-windows.ps1    # fetch deps (if needed) + run harness
+.\scripts\build-windows.ps1   # fetch deps (if needed) + build the DLL
 ```
 
-Display: 320x240 pixels, RGB565 format
+**Direct build (deps already in `deps/`)** — from an MSYS2 UCRT64 shell:
 
-## Build
-
-Builds on Windows with MSYS2/GCC. The repo targets the RetroArch `1.7.5` LibRetro API header in both CI and local dependency bootstrap.
-
-Local build/test on Windows:
-- Preferred contributor path is the checked-in PowerShell wrappers:
-  - `.\scripts\setup-windows.ps1`
-  - `.\scripts\test-windows.ps1`
-  - `.\scripts\build-windows.ps1`
-- These use `MSYS2 UCRT64`, install the CI-equivalent packages, fetch the pinned third-party dependencies into `deps/`, run the native test harness, and build the DLL.
-
-Direct MSYS2 UCRT64 build:
-- Assumes the pinned dependencies have already been fetched into `deps/`
 ```bash
 python3 tests/run_tests.py
 gcc -shared -O2 -I./deps -I./src -o music_playlist_libretro.dll \
@@ -71,57 +76,72 @@ gcc -shared -O2 -I./deps -I./src -o music_playlist_libretro.dll \
   src/metadata.c src/image_codecs.c src/config.c src/layout.c -lm
 ```
 
-GitHub Actions build (`.github/workflows/build.yml`):
-- Runs native tests on `windows-latest`, `ubuntu-latest`, and `macos-latest`
-- Uses `msys2/setup-msys2@v2` with `msystem: UCRT64` for Windows jobs
-- Installs `mingw-w64-ucrt-x86_64-gcc`, `python`, and `curl` as needed
-- Caches and fetches the `deps/` headers automatically
-- Builds the same `music_playlist_libretro.dll` target with the same source list
-- Uploads the DLL as a workflow artifact
-- Runs `clang --analyze` on Ubuntu as non-blocking static analysis
-- On pushes to `main`, the release job downloads that artifact and publishes a GitHub release
+**macOS / Linux** — there is no setup script here; fetch deps manually (see the `curl` block in [`CONTRIBUTING.md`](CONTRIBUTING.md)), then run `python3 tests/run_tests.py`. The harness uses `cc` by default (override with `CC=`). The distributable DLL is built on Windows; on these platforms the harness is the primary local check.
 
-## Repo Automation
+**CI (`.github/workflows/build.yml`)**
+- Native tests on `windows-latest`, `ubuntu-latest`, and `macos-latest`
+- Fetches and caches `deps/` automatically (cache key `deps-v2`)
+- Builds the DLL on Windows (UCRT64) and uploads it as a workflow artifact
+- Runs `clang --analyze` on Ubuntu, non-blocking — intentionally excludes `audio_codecs.c`/`image_codecs.c` (third-party single-header libs would flood the analyzer)
+- On pushes to `main`, publishes the artifact as a GitHub release
 
-The repo includes GitHub Actions workflows that can run Claude in an automated mode on GitHub events. That workflow behavior is defined in `.github/workflows/claude.yml`.
+## Code style & constraints
 
-Do not assume local work should always auto-branch, push, create PRs, or merge unless the current task explicitly calls for that workflow.
+- **C99**, 4-space indentation
+- Static globals hold state (this is a LibRetro core, not a reusable library)
+- Inline comments for non-obvious logic only
+- Keep functions focused and under ~50 lines where practical
+- `uint16_t` for RGB565 framebuffer operations; `int16_t` for audio sample buffers
+- Route diagnostics through `core_log(level, ...)` (see `core_log.h`), not raw `fprintf(stderr, ...)`, so the frontend's log level controls verbosity
 
-## When Implementing Features
+```c
+#define OUT_RATE 48000          // Fixed output sample rate
+#define SAMPLES_PER_FRAME 800   // Audio samples per video frame
+```
 
-1. All audio/visual code goes in the appropriate `src/` module
-2. Test considerations: use `tests/run_tests.py` first for code-level validation, then use `tests/SMOKE_CHECKLIST.md` for frontend smoke testing when behavior changes touch runtime UX
-3. Maintain the 320x240 display constraint
-4. Keep memory usage minimal (embedded/emulator context)
-5. New UI elements usually need both responsive layout handling and non-responsive fallback placement
+**Hard constraints**
+- Render within **320×240, RGB565** — never assume other dimensions.
+- Keep memory usage minimal (embedded/emulator context).
+- New UI elements need **both** a responsive branch (positioned from `layout.*`) **and** a non-responsive fallback (positioned from the element's `media_*_y` offset). Responsive is default-On, but the Off path is wired into every drawing routine in `core.c` and `visualizer.c` — don't break it.
 
-## LibRetro Callbacks
+## LibRetro callbacks (`core.c`)
 
-The core implements these LibRetro callbacks:
-- `retro_run()` - Main loop (audio + video each frame)
-- `retro_load_game()` - Load M3U playlist or audio file
-- `retro_reset()` - Restart the current playback session
-- `retro_serialize()` / `retro_unserialize()` - Save and restore playback/session state
-- `retro_set_environment()` - Declare config variables, input descriptors, and pixel format
-- Input via `retro_input_state_t` callbacks
+- `retro_run()` — main loop; produces audio + one video frame per call
+- `retro_load_game()` — load an M3U playlist or a single audio file
+- `retro_reset()` — restart the current playback session
+- `retro_serialize()` / `retro_unserialize()` — save / restore playback + session state
+- `retro_set_environment()` — declares core options, input descriptors, and the RGB565 pixel format
+- Input is read through `retro_input_state_t`
 
-## Configuration Variables
+## Configuration options (`config.c`)
 
-UI elements are configurable via LibRetro core options:
-- Position offsets (`art_y`, `txt_y`, `viz_y`, `bar_y`, `tim_y`, `ico_y`)
-- Visibility toggles (`show_art`, `show_txt`, `show_viz`, `show_bar`, `show_tim`, `show_ico`)
-- Responsive layout controls (`responsive`, `debug_layout`, `ui_top`, `ui_bottom`, `ui_left`, `ui_right`)
-- Visualizer options (`viz_mode`, `viz_bands`, `viz_gradient`, `viz_peak_hold`)
-- Track text mode (`media_use_filename`)
-- Colors (`bg_rgb`, `fg_rgb`)
+All keys are prefixed `media_`, declared in `config_declare_variables()` and read in `config_update()`. Defaults in parentheses.
+
+- **Visibility (On/Off, all On):** `media_show_art`, `media_show_txt`, `media_show_viz`, `media_show_bar`, `media_show_tim`, `media_show_ico`
+- **Responsive layout:** `media_responsive` (On), `media_debug_layout` (Off), and usable-region bounds `media_ui_top` (20), `media_ui_bottom` (80), `media_ui_left` (10), `media_ui_right` (90), as percentages
+- **Manual Y offsets** (used mainly when responsive is Off): `media_art_y` (40), `media_txt_y` (150), `media_viz_y` (140), `media_bar_y` (180), `media_tim_y` (190), `media_ico_y` (20)
+- **Visualizer:** `media_viz_mode` (`Bars` | `VU Meter` | `Dots` | `Line`; legacy `FFT EQ` maps to `Bars`), `media_viz_bands` (40; presets 40/20), `media_viz_gradient` (On), `media_viz_peak_hold` (30)
+- **Track text:** `media_use_filename` — `Show ID` (metadata) | `Show filename with extension` | `Show Filename without extension`
+- **Colors:** six 0–255 channels `media_bg_r/g/b` (0/64/0) and `media_fg_r/g/b` (0/255/0), packed into `cfg.bg_rgb` / `cfg.fg_rgb` as RGB565
 
 ## Controls
 
-Current user-facing controls:
-- `B` - Pause/Play
-- `X` - Cycle visualizer mode (`Bars -> VU Meter -> Dots -> Line`)
-- `L` / `R` - Previous / Next track
-- `LEFT` / `RIGHT` - Seek backward / forward by about 3 seconds
-- `Y` - Toggle shuffle
+| Button | Action |
+|---|---|
+| `B` | Pause / Play |
+| `X` | Cycle visualizer (`Bars → VU Meter → Dots → Line`) |
+| `L` / `R` | Previous / Next track |
+| `LEFT` / `RIGHT` | Seek backward / forward ~3 seconds |
+| `Y` | Toggle shuffle |
 
-RetroArch input descriptors are registered for these actions, so control labels should appear in the frontend controls menu.
+Input descriptors for these are registered via `RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS`, so labels appear in the frontend's controls menu (`input_descriptors = "true"` in the `.info`).
+
+## Working in this repo
+
+1. Put audio/visual logic in the matching `src/` module.
+2. Validate with `python3 tests/run_tests.py` first; for changes that touch runtime UX, also walk [`tests/SMOKE_CHECKLIST.md`](tests/SMOKE_CHECKLIST.md) in a frontend.
+3. Respect the 320×240 / RGB565 / minimal-memory constraints.
+4. Handle both responsive and non-responsive placement for new UI elements.
+5. Keep `CLAUDE.md`, `CONTRIBUTING.md`, and `music_playlist_libretro.info` consistent with what the code actually does.
+
+**Automation boundary:** the repo has GitHub Actions that can run Claude on GitHub events (`.github/workflows/claude.yml`). For local work, do **not** auto-branch, push, open PRs, or merge unless the task explicitly asks for it.

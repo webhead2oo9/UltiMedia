@@ -2,9 +2,12 @@
 
 ![UltiMedia logo](branding/logo.png)
 
-A LibRetro audio player core for RetroArch and EmuVR that plays `.m3u` playlists and standalone audio files with album art, scrolling track text, responsive layout, shuffle, and save-state-aware playback.
+[![Build & Release](https://github.com/webhead2oo9/UltiMedia/actions/workflows/build.yml/badge.svg)](https://github.com/webhead2oo9/UltiMedia/actions/workflows/build.yml)
+[![Latest release](https://img.shields.io/github/v/release/webhead2oo9/UltiMedia?display_name=tag&label=release)](https://github.com/webhead2oo9/UltiMedia/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![Platforms](https://img.shields.io/badge/platforms-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS-lightgrey)
 
-**Originally created by KrisRetro**
+A LibRetro audio player core for RetroArch and EmuVR that plays `.m3u` playlists and standalone audio files with album art, scrolling track text, responsive layout, shuffle, and save-state-aware playback.
 
 ## Quick Start
 
@@ -171,6 +174,17 @@ Pushes to `main` also publish the built DLL as a GitHub release artifact.
 
 For manual frontend verification, use [tests/SMOKE_CHECKLIST.md](tests/SMOKE_CHECKLIST.md).
 
+## Contributing
+
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, the build and test workflow, and code style. Please also review the [Code of Conduct](CODE_OF_CONDUCT.md). To report a security issue, see [SECURITY.md](SECURITY.md).
+
 ## License
 
-MIT
+Released under the [MIT License](LICENSE).
+
+## Acknowledgements
+
+- Originally created by **KrisRetro**
+- [LibRetro](https://www.libretro.com/) — core API (`libretro.h`)
+- [dr_libs](https://github.com/mackron/dr_libs) by David Reid — `dr_mp3`, `dr_wav`, and `dr_flac` audio decoders
+- [stb](https://github.com/nothings/stb) by Sean Barrett — `stb_image` and `stb_vorbis`

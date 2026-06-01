@@ -7,6 +7,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <time.h>
+#include <stdarg.h>
 #include "libretro.h"
 
 #include "config.h"
@@ -15,6 +16,7 @@
 #include "audio.h"
 #include "metadata.h"
 #include "visualizer.h"
+#include "core_log.h"
 
 #define CORE_MAX_TRACKS 256
 #define CORE_MAX_PATH 1024
@@ -28,6 +30,24 @@ static retro_video_refresh_t video_cb;
 static retro_audio_sample_batch_t audio_batch_cb;
 static retro_input_poll_t input_poll_cb;
 static retro_input_state_t input_state_cb;
+
+// Diagnostics: route through the frontend log interface when present,
+// otherwise fall back to stderr (e.g. under the native test harness).
+static void core_log_fallback(enum retro_log_level level, const char *fmt, ...) {
+    (void)level;
+    va_list args;
+    va_start(args, fmt);
+    vfprintf(stderr, fmt, args);
+    va_end(args);
+}
+
+retro_log_printf_t core_log = core_log_fallback;
+
+void core_log_init(retro_environment_t cb) {
+    struct retro_log_callback logging;
+    if (cb && cb(RETRO_ENVIRONMENT_GET_LOG_INTERFACE, &logging) && logging.log)
+        core_log = logging.log;
+}
 
 // Playlist state
 static char *tracks[CORE_MAX_TRACKS];
@@ -756,7 +776,7 @@ void retro_run(void) {
 
         if (cfg.show_tim && layout.time.w > 0) {
             int sec = source_rate ? (int)(cur_frame / source_rate) : 0;
-            sprintf(time_str, "%02d:%02d", sec / 60, sec % 60);
+            snprintf(time_str, sizeof(time_str), "%02d:%02d", sec / 60, sec % 60);
             int time_x = layout.time.x + (layout.time.w - ((int)strlen(time_str) * 8)) / 2;
             draw_text(time_x, layout.time.y, time_str, cfg.fg_rgb);
         }
@@ -804,7 +824,7 @@ void retro_run(void) {
         }
         if (cfg.show_tim) {
             int sec = source_rate ? (int)(cur_frame / source_rate) : 0;
-            sprintf(time_str, "%02d:%02d", sec / 60, sec % 60);
+            snprintf(time_str, sizeof(time_str), "%02d:%02d", sec / 60, sec % 60);
             draw_text(140, cfg.tim_y, time_str, cfg.fg_rgb);
         }
         if (cfg.show_ico) {
@@ -821,6 +841,7 @@ void retro_run(void) {
 
 void retro_set_environment(retro_environment_t cb) {
     environ_cb = cb;
+    core_log_init(cb);
     config_declare_variables(cb);
     cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, (void*)input_descriptors);
     enum retro_pixel_format fmt = RETRO_PIXEL_FORMAT_RGB565;
@@ -839,11 +860,11 @@ bool retro_load_game(const struct retro_game_info *g) {
     // Check for M3U extension
     const char* ext = strrchr(g->path, '.');
     if (ext && strcasecmp_simple(ext, ".m3u") == 0) {
-        fprintf(stderr, "[MusicCore] Attempting to open M3U: %s\n", g->path);
+        core_log(RETRO_LOG_DEBUG, "[MusicCore] Attempting to open M3U: %s\n", g->path);
 
         FILE *f = fopen(g->path, "rb");
         if (!f) {
-            fprintf(stderr, "[MusicCore] Failed to open M3U at %s\n", g->path);
+            core_log(RETRO_LOG_ERROR, "[MusicCore] Failed to open M3U at %s\n", g->path);
             return false;
         }
         bool m3u_utf16_le = false;

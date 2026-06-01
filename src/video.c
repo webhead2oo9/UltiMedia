@@ -1,6 +1,6 @@
 #include "video.h"
 #include "font.h"
-#include <stdio.h>
+#include "core_log.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -9,7 +9,7 @@ uint16_t *framebuffer = NULL;
 void video_init(void) {
     framebuffer = malloc(FB_WIDTH * FB_HEIGHT * sizeof(uint16_t));
     if (!framebuffer) {
-        fprintf(stderr, "[MusicCore] Failed to allocate framebuffer\n");
+        core_log(RETRO_LOG_ERROR, "[MusicCore] Failed to allocate framebuffer\n");
         return;
     }
     memset(framebuffer, 0, FB_WIDTH * FB_HEIGHT * sizeof(uint16_t));

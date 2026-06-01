@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Releases / downloads
+    url: https://github.com/webhead2oo9/UltiMedia/releases
+    about: Grab the latest built core here.
+  - name: RetroArch
+    url: https://www.retroarch.com/
+    about: Questions about the frontend itself belong upstream.

@@ -1,0 +1,85 @@
+name: Bug report
+description: Report a problem with the UltiMedia core
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please fill out the sections below so it can be reproduced.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, including what you expected to happen instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: How can this be reproduced?
+      placeholder: |
+        1. Load '...'
+        2. Press '...'
+        3. See '...'
+    validations:
+      required: true
+  - type: dropdown
+    id: frontend
+    attributes:
+      label: Frontend
+      options:
+        - RetroArch
+        - EmuVR
+        - Other (note in description)
+    validations:
+      required: true
+  - type: input
+    id: frontend-version
+    attributes:
+      label: Frontend version
+      placeholder: "e.g. RetroArch 1.7.5"
+    validations:
+      required: false
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - Linux
+        - macOS
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: core-version
+    attributes:
+      label: Core version / build
+      description: The release tag or DLL build you are running (see the core info or the Releases page).
+      placeholder: "e.g. 0.1 / build abc1234"
+    validations:
+      required: false
+  - type: dropdown
+    id: media-type
+    attributes:
+      label: Affected media
+      multiple: true
+      options:
+        - MP3
+        - OGG
+        - FLAC
+        - WAV
+        - M3U playlist
+        - Album art / image
+        - Not media-specific
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / screenshots
+      description: Paste any relevant RetroArch log output, or attach a screenshot.
+    validations:
+      required: false
