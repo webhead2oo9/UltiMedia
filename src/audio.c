@@ -215,6 +215,11 @@ bool audio_open_track(const char *path) {
         audio_close();
         return false;
     }
+    // A zero rate would stall the resampler (cur_frame would never advance).
+    if (source_rate == 0) {
+        audio_close();
+        return false;
+    }
 
     resample_phase = 0.0;
     resample_cache_frames = 0;

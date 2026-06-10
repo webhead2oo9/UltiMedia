@@ -67,6 +67,7 @@ static int viz_mode_menu_value = 0;
 static char time_str[32];
 static int ff_rw_icon_timer = 0;
 static int ff_rw_dir = 0;
+static int seek_repeat_cooldown = 0;
 static bool config_needs_refresh = true;
 static uint32_t shuffle_seed = 0;
 static uint32_t shuffle_state = 0;
@@ -259,6 +260,29 @@ static char *file_uri_path_start(char *uri, bool *file_is_unc) {
     return uri;
 }
 
+static size_t utf8_encode(uint32_t cp, char out[4]) {
+    if (cp < 0x80) {
+        out[0] = (char)cp;
+        return 1;
+    }
+    if (cp < 0x800) {
+        out[0] = (char)(0xC0 | (cp >> 6));
+        out[1] = (char)(0x80 | (cp & 0x3F));
+        return 2;
+    }
+    if (cp < 0x10000) {
+        out[0] = (char)(0xE0 | (cp >> 12));
+        out[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        out[2] = (char)(0x80 | (cp & 0x3F));
+        return 3;
+    }
+    out[0] = (char)(0xF0 | (cp >> 18));
+    out[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+    out[2] = (char)(0x80 | ((cp >> 6) & 0x3F));
+    out[3] = (char)(0x80 | (cp & 0x3F));
+    return 4;
+}
+
 static int read_utf16_line(FILE *f, char *out, size_t out_sz, bool le) {
     if (!out || out_sz == 0) return 0;
     size_t idx = 0;
@@ -284,7 +308,29 @@ static int read_utf16_line(FILE *f, char *out, size_t out_sz, bool le) {
             }
             break;
         }
-        if (idx + 1 < out_sz) out[idx++] = (ch < 0x80) ? (char)ch : '?';
+        uint32_t cp = ch;
+        if (ch >= 0xD800 && ch <= 0xDBFF) {
+            // High surrogate: pair it with the next code unit.
+            long pos = ftell(f);
+            unsigned char nb[2];
+            cp = (uint32_t)'?';
+            if (fread(nb, 1, 2, f) == 2) {
+                uint16_t lo = le ? (uint16_t)(nb[0] | (nb[1] << 8)) : (uint16_t)(nb[1] | (nb[0] << 8));
+                if (lo >= 0xDC00 && lo <= 0xDFFF)
+                    cp = 0x10000u + (((uint32_t)ch - 0xD800u) << 10) + ((uint32_t)lo - 0xDC00u);
+                else if (pos >= 0)
+                    fseek(f, pos, SEEK_SET); // unpaired; reprocess the next unit
+            }
+        } else if (ch >= 0xDC00 && ch <= 0xDFFF) {
+            cp = (uint32_t)'?'; // unpaired low surrogate
+        }
+
+        char enc[4];
+        size_t enc_len = utf8_encode(cp, enc);
+        if (idx + enc_len < out_sz) {
+            memcpy(out + idx, enc, enc_len);
+            idx += enc_len;
+        }
     }
     out[idx] = '\0';
     return 1;
@@ -605,6 +651,7 @@ static void reset_runtime_state(bool preserve_shuffle_mode) {
     time_str[0] = '\0';
     ff_rw_icon_timer = 0;
     ff_rw_dir = 0;
+    seek_repeat_cooldown = 0;
     config_needs_refresh = true;
     clear_shuffle_state();
     viz_reset_state();
@@ -730,17 +777,27 @@ void retro_run(void) {
 
     // 1. Handle Inputs
     if (decoder && !is_paused) {
-        int seek_speed = source_rate * 3;
-        if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT)) {
-            uint64_t next = cur_frame + (uint64_t)seek_speed;
-            if (next < cur_frame) next = cur_frame; // overflow guard
-            if (total_frames > 0 && next >= total_frames) next = total_frames - 1;
-            audio_seek(next);
-            ff_rw_icon_timer = 15; ff_rw_dir = 1;
-        } else if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT)) {
-            uint64_t next = (cur_frame < (uint64_t)seek_speed) ? 0 : cur_frame - (uint64_t)seek_speed;
-            audio_seek(next);
-            ff_rw_icon_timer = 15; ff_rw_dir = -1;
+        bool seek_fwd = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT) != 0;
+        bool seek_back = !seek_fwd && input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT) != 0;
+        if (seek_repeat_cooldown > 0) seek_repeat_cooldown--;
+        if (!seek_fwd && !seek_back) {
+            seek_repeat_cooldown = 0; // a fresh tap seeks immediately
+        } else if (seek_repeat_cooldown == 0) {
+            // Decoder seeks are costly (MP3 backward seeks re-decode from the
+            // start of the file), so a held button repeats at 10 Hz, not 60.
+            seek_repeat_cooldown = 6;
+            int seek_speed = source_rate * 3;
+            if (seek_fwd) {
+                uint64_t next = cur_frame + (uint64_t)seek_speed;
+                if (next < cur_frame) next = cur_frame; // overflow guard
+                if (total_frames > 0 && next >= total_frames) next = total_frames - 1;
+                audio_seek(next);
+                ff_rw_icon_timer = 15; ff_rw_dir = 1;
+            } else {
+                uint64_t next = (cur_frame < (uint64_t)seek_speed) ? 0 : cur_frame - (uint64_t)seek_speed;
+                audio_seek(next);
+                ff_rw_icon_timer = 15; ff_rw_dir = -1;
+            }
         }
     }
 
