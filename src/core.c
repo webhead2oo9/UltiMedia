@@ -57,9 +57,13 @@ static char m3u_base_path[CORE_MAX_PATH] = {0};
 
 // UI state
 static int scroll_x = 320;
-static int debounce = 0;
+static uint16_t held_buttons = 0;
 static bool is_paused = false;
 static bool is_shuffle = false;
+// Visualizer mode chosen with the X button; survives config refreshes until
+// the user changes the core option itself.
+static bool viz_mode_user_override = false;
+static int viz_mode_menu_value = 0;
 static char time_str[32];
 static int ff_rw_icon_timer = 0;
 static int ff_rw_dir = 0;
@@ -92,7 +96,7 @@ typedef struct {
     int32_t current_idx;
     int32_t viz_mode;
     int32_t scroll_x;
-    int32_t debounce;
+    int32_t legacy_debounce; // unused since edge-triggered input; keeps layout stable
     int32_t ff_rw_icon_timer;
     int32_t ff_rw_dir;
     uint8_t is_paused;
@@ -112,12 +116,23 @@ typedef struct {
 } CoreStateSnapshot;
 
 // Forward declarations
-static void open_track(int idx);
+static bool open_track(int idx);
 static void clear_shuffle_state(void);
 static void reset_runtime_state(bool preserve_shuffle_mode);
 static size_t serialized_state_size(void);
 static void open_next_track(void);
 static void open_previous_track(void);
+
+// Edge-triggered button check: true only on the frame the button goes down.
+// Joypad IDs are < 16, so one uint16_t tracks every button's held state.
+static bool button_pressed(unsigned id) {
+    bool down = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, id) != 0;
+    uint16_t mask = (uint16_t)(1u << id);
+    bool was_down = (held_buttons & mask) != 0;
+    if (down) held_buttons |= mask;
+    else held_buttons &= ~mask;
+    return down && !was_down;
+}
 
 static int next_viz_mode(int mode) {
     if (mode == VIZ_MODE_BARS || mode == VIZ_MODE_FFT_EQ_LEGACY) return VIZ_MODE_VU; // Bars -> VU Meter
@@ -528,52 +543,63 @@ static int next_track_index(void) {
     return current_idx + 1;
 }
 
+// Both navigation helpers retry past tracks that fail to open so one bad
+// file doesn't dead-end playback; they give up after one full playlist pass.
 static void open_next_track(void) {
     if (track_count == 0) return;
-    if (!is_shuffle || track_count <= 1) {
-        open_track(current_idx + 1);
-        return;
+
+    for (int attempt = 0; attempt < track_count; attempt++) {
+        if (!is_shuffle || track_count <= 1) {
+            if (open_track(current_idx + 1)) return;
+            continue;
+        }
+
+        ensure_shuffle_ready();
+        ensure_shuffle_history_current();
+
+        if (shuffle_history_pos + 1 < shuffle_history_count) {
+            shuffle_history_pos++;
+            if (open_track(shuffle_history[shuffle_history_pos])) return;
+            continue;
+        }
+
+        int next_idx = next_track_index();
+        append_shuffle_history(next_idx);
+        if (open_track(next_idx)) return;
     }
-
-    ensure_shuffle_ready();
-    ensure_shuffle_history_current();
-
-    if (shuffle_history_pos + 1 < shuffle_history_count) {
-        shuffle_history_pos++;
-        open_track(shuffle_history[shuffle_history_pos]);
-        return;
-    }
-
-    int next_idx = next_track_index();
-    append_shuffle_history(next_idx);
-    open_track(next_idx);
 }
 
 static void open_previous_track(void) {
     if (track_count == 0) return;
-    if (!is_shuffle || track_count <= 1) {
-        open_track(current_idx - 1);
-        return;
+
+    for (int attempt = 0; attempt < track_count; attempt++) {
+        if (!is_shuffle || track_count <= 1) {
+            if (open_track(current_idx - 1)) return;
+            continue;
+        }
+
+        ensure_shuffle_ready();
+        ensure_shuffle_history_current();
+
+        if (shuffle_history_pos > 0) {
+            shuffle_history_pos--;
+            if (open_track(shuffle_history[shuffle_history_pos])) return;
+            continue;
+        }
+
+        if (open_track(current_idx - 1)) {
+            ensure_shuffle_ready();
+            sync_shuffle_to_current_track();
+            seed_shuffle_history(current_idx);
+            return;
+        }
     }
-
-    ensure_shuffle_ready();
-    ensure_shuffle_history_current();
-
-    if (shuffle_history_pos > 0) {
-        shuffle_history_pos--;
-        open_track(shuffle_history[shuffle_history_pos]);
-        return;
-    }
-
-    open_track(current_idx - 1);
-    ensure_shuffle_ready();
-    sync_shuffle_to_current_track();
-    seed_shuffle_history(current_idx);
 }
 
 static void reset_runtime_state(bool preserve_shuffle_mode) {
     scroll_x = FB_WIDTH;
-    debounce = 0;
+    held_buttons = 0;
+    viz_mode_user_override = false;
     is_paused = false;
     if (!preserve_shuffle_mode) is_shuffle = false;
     time_str[0] = '\0';
@@ -632,8 +658,8 @@ static int validate_loaded_content(const CoreStateSnapshot *state, size_t serial
     return state->content_hash == current_content_hash();
 }
 
-static void open_track(int idx) {
-    if (track_count == 0) return;
+static bool open_track(int idx) {
+    if (track_count == 0) return false;
 
     current_idx = (idx + track_count) % track_count;
     const char *p = tracks[current_idx];
@@ -641,14 +667,14 @@ static void open_track(int idx) {
     // Open audio
     if (!audio_open_track(p)) {
         snprintf(display_str, sizeof(display_str), "ERROR LOADING: %.230s", p);
-        return;
+        return false;
     }
 
     // Check channel limit
     if (source_channels > MAX_CHANNELS) {
         audio_close();
         snprintf(display_str, sizeof(display_str), "UNSUPPORTED CHANNELS: %d", source_channels);
-        return;
+        return false;
     }
 
     viz_reset_state();
@@ -656,11 +682,28 @@ static void open_track(int idx) {
     // Load metadata and album art
     metadata_load(p, m3u_base_path, cfg.track_text_mode);
     scroll_x = cfg.responsive ? (layout.content_x + layout.content_w) : FB_WIDTH;
+    return true;
+}
+
+// Re-read core options. The X button can override the visualizer mode at
+// runtime; keep that override across refreshes until the menu option itself
+// changes, then adopt the menu value and drop the override.
+static void apply_config_update(void) {
+    int runtime_mode = cfg.viz_mode;
+    config_update(environ_cb);
+    int menu_mode = cfg.viz_mode;
+    if (viz_mode_user_override) {
+        if (menu_mode == viz_mode_menu_value)
+            cfg.viz_mode = runtime_mode;
+        else
+            viz_mode_user_override = false;
+    }
+    viz_mode_menu_value = menu_mode;
 }
 
 static void refresh_config_and_layout(void) {
     TrackTextMode old_track_text_mode = cfg.track_text_mode;
-    config_update(environ_cb);
+    apply_config_update();
     if (cfg.responsive)
         layout_compute();
 
@@ -701,29 +744,25 @@ void retro_run(void) {
         }
     }
 
-    if (debounce > 0) debounce--;
-    else {
-        if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y)) {
-            is_shuffle = !is_shuffle;
-            if (is_shuffle) {
-                ensure_shuffle_ready();
-                sync_shuffle_to_current_track();
-                seed_shuffle_history(current_idx);
-            } else {
-                shuffle_history_count = 0;
-                shuffle_history_pos = 0;
-            }
-            debounce = 20;
+    if (button_pressed(RETRO_DEVICE_ID_JOYPAD_Y)) {
+        is_shuffle = !is_shuffle;
+        if (is_shuffle) {
+            ensure_shuffle_ready();
+            sync_shuffle_to_current_track();
+            seed_shuffle_history(current_idx);
+        } else {
+            shuffle_history_count = 0;
+            shuffle_history_pos = 0;
         }
-        if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B)) { is_paused = !is_paused; debounce = 20; }
-        if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X)) {
-            cfg.viz_mode = next_viz_mode(cfg.viz_mode);
-            if (cfg.responsive) layout_compute();
-            debounce = 20;
-        }
-        if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R)) { open_next_track(); debounce = 20; }
-        if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L)) { open_previous_track(); debounce = 20; }
     }
+    if (button_pressed(RETRO_DEVICE_ID_JOYPAD_B)) is_paused = !is_paused;
+    if (button_pressed(RETRO_DEVICE_ID_JOYPAD_X)) {
+        cfg.viz_mode = next_viz_mode(cfg.viz_mode);
+        viz_mode_user_override = true;
+        if (cfg.responsive) layout_compute();
+    }
+    if (button_pressed(RETRO_DEVICE_ID_JOYPAD_R)) open_next_track();
+    if (button_pressed(RETRO_DEVICE_ID_JOYPAD_L)) open_previous_track();
 
     // 2. Audio Core
     int16_t out_buf[SAMPLES_PER_FRAME * 2] = {0};
@@ -957,11 +996,16 @@ bool retro_load_game(const struct retro_game_info *g) {
     if (track_count == 0) return false;
 
     start_shuffle_cycle(generate_shuffle_seed());
-    config_update(environ_cb);
+    apply_config_update();
     if (cfg.responsive)
         layout_compute();
 
-    open_track(0);
+    if (!open_track(0)) {
+        // Skip past unreadable leading tracks so the playlist still starts.
+        for (int i = 1; i < track_count; i++) {
+            if (open_track(i)) break;
+        }
+    }
     return true;
 }
 
@@ -1048,7 +1092,6 @@ bool retro_serialize(void *d, size_t s) {
     state.current_idx = current_idx;
     state.viz_mode = normalize_viz_mode(cfg.viz_mode);
     state.scroll_x = scroll_x;
-    state.debounce = debounce;
     state.ff_rw_icon_timer = ff_rw_icon_timer;
     state.ff_rw_dir = ff_rw_dir;
     state.is_paused = is_paused ? 1u : 0u;
@@ -1122,11 +1165,12 @@ bool retro_unserialize(const void *d, size_t s) {
         return false;
     }
 
-    config_update(environ_cb);
+    apply_config_update();
     cfg.viz_mode = normalize_viz_mode(state->viz_mode);
     if (cfg.responsive) layout_compute();
 
     reset_runtime_state(state->is_shuffle != 0);
+    viz_mode_user_override = (cfg.viz_mode != viz_mode_menu_value);
     current_idx = state->current_idx;
     const char *serialized_m3u_base_path = (const char*)(state + 1);
     if (!copy_cstr_fixed(m3u_base_path, sizeof(m3u_base_path), serialized_m3u_base_path)) return false;
@@ -1135,7 +1179,6 @@ bool retro_unserialize(const void *d, size_t s) {
     is_paused = state->is_paused != 0;
     is_shuffle = state->is_shuffle != 0;
     scroll_x = state->scroll_x;
-    debounce = state->debounce;
     ff_rw_icon_timer = state->ff_rw_icon_timer;
     ff_rw_dir = state->ff_rw_dir;
     shuffle_seed = sanitize_seed(state->shuffle_seed ? state->shuffle_seed : current_content_hash());
