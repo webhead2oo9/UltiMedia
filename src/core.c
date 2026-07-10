@@ -1081,8 +1081,10 @@ void retro_set_input_poll(retro_input_poll_t cb) { input_poll_cb = cb; }
 void retro_set_input_state(retro_input_state_t cb) { input_state_cb = cb; }
 unsigned retro_api_version(void) { return RETRO_API_VERSION; }
 void retro_get_system_info(struct retro_system_info *i) {
-    i->library_name = "Music Playlist Core";
-    i->library_version = "1.0";
+    // Frontends key per-core settings, remaps, and save-state folders off
+    // this identity -- renaming it orphans existing users' data.
+    i->library_name = "UltiMedia UGC";
+    i->library_version = "17.0";
     i->valid_extensions = "mp3|wav|m3u|ogg|flac";
     i->need_fullpath = true;
 }
