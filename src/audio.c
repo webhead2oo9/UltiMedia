@@ -33,7 +33,10 @@ static bool audio_snapshot_fields_valid(const AudioStateSnapshot *state) {
         return false;
     if (!isfinite(state->resample_phase) || state->resample_phase < 0.0 || state->resample_phase >= 1.0)
         return false;
-    if (state->cur_frame > state->total_frames) return false;
+    // total_frames == 0 means the decoder reported an unknown length (FLAC
+    // without a STREAMINFO total, OGG length-probe failure), so a positive
+    // position is legitimate there.
+    if (state->total_frames > 0 && state->cur_frame > state->total_frames) return false;
 
     if ((AudioType)state->current_type == AUDIO_NONE) {
         return state->source_rate == 0 &&
@@ -302,8 +305,14 @@ void audio_capture_state(AudioStateSnapshot *state) {
     memcpy(state->resample_cache, resample_cache, sizeof(resample_cache));
 }
 
+bool audio_snapshot_valid(const AudioStateSnapshot *state) {
+    return state &&
+           state->version == AUDIO_STATE_SNAPSHOT_VERSION &&
+           audio_snapshot_fields_valid(state);
+}
+
 bool audio_restore_state(const char *path, const AudioStateSnapshot *state) {
-    if (!state || state->version != AUDIO_STATE_SNAPSHOT_VERSION || !audio_snapshot_fields_valid(state))
+    if (!audio_snapshot_valid(state))
         return false;
 
     if ((AudioType)state->current_type == AUDIO_NONE) {
@@ -318,12 +327,14 @@ bool audio_restore_state(const char *path, const AudioStateSnapshot *state) {
         return false;
     }
     resume_frame += (uint64_t)state->resample_cache_frames;
+    // No positional bound check here: cur_frame <= total_frames is already
+    // enforced by audio_snapshot_valid for known lengths, and resume_frame
+    // may legitimately overshoot total_frames by up to the cache size when
+    // playback ran past an under-reported track length (e.g. VBR MP3).
     if (current_type != (AudioType)state->current_type ||
         source_rate != state->source_rate ||
         source_channels != state->source_channels ||
-        total_frames != state->total_frames ||
-        state->cur_frame > total_frames ||
-        resume_frame > total_frames) {
+        total_frames != state->total_frames) {
         audio_close();
         return false;
     }

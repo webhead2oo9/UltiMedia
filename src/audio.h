@@ -52,6 +52,9 @@ void audio_close(void);
 // Capture the current decode/resampler state
 void audio_capture_state(AudioStateSnapshot *state);
 
+// Validate a snapshot's version and fields without touching the decoder
+bool audio_snapshot_valid(const AudioStateSnapshot *state);
+
 // Reopen a track and restore decode/resampler state
 bool audio_restore_state(const char *path, const AudioStateSnapshot *state);
 

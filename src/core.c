@@ -1234,12 +1234,21 @@ bool retro_unserialize(const void *d, size_t s) {
             return false;
     }
 
+    // Reject invalid audio snapshots before touching the live decoder:
+    // audio_restore_state would fail on pure validation, and tearing
+    // playback down for a state that was never going to load would silence
+    // a healthy session.
+    if (!audio_snapshot_valid(&state->audio)) return false;
+
     AudioStateSnapshot previous_audio;
     const char *previous_track = NULL;
     bool had_current_track = current_idx >= 0 && current_idx < track_count && tracks[current_idx];
     if (had_current_track) previous_track = tracks[current_idx];
     audio_capture_state(&previous_audio);
 
+    // The incoming snapshot validated above, so a restore failure here
+    // means the live decoder really was disturbed; roll back, and close
+    // only if the rollback fails too.
     if (!audio_restore_state(tracks[state->current_idx], &state->audio)) {
         if (!audio_restore_state(previous_track, &previous_audio))
             audio_close();
