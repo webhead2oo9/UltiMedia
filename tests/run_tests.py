@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import wave
+import zlib
 from pathlib import Path
 
 
@@ -57,6 +58,33 @@ def write_playlist(path: Path, entries: list[str]) -> None:
     path.write_text("\n".join(entries) + "\n", encoding="utf-8")
 
 
+def write_utf16_playlist(path: Path, entries: list[str], byte_order: str) -> None:
+    content = "\n".join(entries) + "\n"
+    if byte_order == "little":
+        path.write_bytes(b"\xff\xfe" + content.encode("utf-16-le"))
+    elif byte_order == "big":
+        path.write_bytes(b"\xfe\xff" + content.encode("utf-16-be"))
+    else:
+        raise ValueError(f"Unsupported UTF-16 byte order: {byte_order}")
+
+
+def write_png(path: Path, width: int, height: int, rgb: tuple[int, int, int]) -> None:
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        checksum = zlib.crc32(kind)
+        checksum = zlib.crc32(data, checksum)
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", checksum & 0xFFFFFFFF)
+
+    row = b"\x00" + bytes(rgb) * width
+    pixels = row * height
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    path.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", zlib.compress(pixels))
+        + chunk(b"IEND", b"")
+    )
+
+
 def generate_fixtures(fixtures_dir: Path) -> None:
     fixtures_dir.mkdir(parents=True, exist_ok=True)
 
@@ -67,6 +95,8 @@ def generate_fixtures(fixtures_dir: Path) -> None:
         "track_d.wav": 880.0,
         "alt_1.wav": 329.63,
         "alt_2.wav": 493.88,
+        "unicode_音.wav": 392.0,
+        "art_track.wav": 261.63,
     }
     for name, frequency in tracks.items():
         write_wave(fixtures_dir / name, frequency)
@@ -79,6 +109,17 @@ def generate_fixtures(fixtures_dir: Path) -> None:
         fixtures_dir / "playlist_alt.m3u",
         ["alt_1.wav", "alt_2.wav"],
     )
+    write_playlist(
+        fixtures_dir / "playlist_missing_middle.m3u",
+        ["track_a.wav", "missing.wav", "track_b.wav"],
+    )
+    write_playlist(fixtures_dir / "playlist_all_bad.m3u", ["missing_a.wav", "missing_b.wav"])
+    write_utf16_playlist(fixtures_dir / "playlist_utf16le.m3u", ["unicode_音.wav"], "little")
+    write_utf16_playlist(fixtures_dir / "playlist_utf16be.m3u", ["unicode_音.wav"], "big")
+    write_wave(fixtures_dir / "short.wav", 440.0, duration_seconds=0.005)
+    write_wave(fixtures_dir / "seek_long.wav", 220.0, duration_seconds=8.0)
+    write_wave(fixtures_dir / "unsupported_rate.wav", 440.0, duration_seconds=0.01, sample_rate=768_000)
+    write_png(fixtures_dir / "art_track.png", 256, 200, (30, 120, 220))
 
 
 def build_harness(repo_root: Path, temp_dir: Path, compiler: str) -> Path:
@@ -96,10 +137,12 @@ def build_harness(repo_root: Path, temp_dir: Path, compiler: str) -> Path:
         "src/config.c",
         "src/layout.c",
     ]
+    extra_cflags = shlex.split(os.environ.get("CFLAGS", ""))
     command = [
         compiler,
         "-std=c99",
         "-O2",
+        *extra_cflags,
         "-I./deps",
         "-I./src",
         "-o",

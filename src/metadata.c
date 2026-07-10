@@ -6,10 +6,14 @@
 #include "dr_flac.h"
 #include "stb_image.h"
 #include "stb_vorbis_compat.h"
+#include "path_io.h"
 
 uint16_t *art_buffer = NULL;
 int art_w_src = 0, art_h_src = 0;
 char display_str[256];
+
+#define ART_MAX_DIMENSION 4096
+#define ART_STORED_MAX_DIMENSION 120
 
 typedef struct {
     char *artist;
@@ -17,6 +21,57 @@ typedef struct {
     char *album;
     int maxlen;
 } FlacMetaContext;
+
+static int art_dimensions_valid(int width, int height) {
+    return width > 0 && height > 0 &&
+           width <= ART_MAX_DIMENSION && height <= ART_MAX_DIMENSION;
+}
+
+static unsigned char *load_art_file(const char *path, int *width, int *height) {
+    int components = 0;
+    if (!path || !width || !height) return NULL;
+    if (!stbi_info(path, width, height, &components) || !art_dimensions_valid(*width, *height))
+        return NULL;
+    return stbi_load(path, width, height, NULL, 3);
+}
+
+static unsigned char *load_art_memory(const unsigned char *data, size_t size, int *width, int *height) {
+    int components = 0;
+    if (!data || size == 0 || size > INT32_MAX || !width || !height) return NULL;
+    if (!stbi_info_from_memory(data, (int)size, width, height, &components) ||
+        !art_dimensions_valid(*width, *height))
+        return NULL;
+    return stbi_load_from_memory(data, (int)size, width, height, NULL, 3);
+}
+
+static void store_art_rgb565(const unsigned char *img_data, int source_w, int source_h) {
+    if (!img_data || !art_dimensions_valid(source_w, source_h)) return;
+
+    int stored_w = source_w;
+    int stored_h = source_h;
+    if (stored_w > ART_STORED_MAX_DIMENSION) stored_w = ART_STORED_MAX_DIMENSION;
+    if (stored_h > ART_STORED_MAX_DIMENSION) stored_h = ART_STORED_MAX_DIMENSION;
+
+    size_t pixel_count = (size_t)stored_w * (size_t)stored_h;
+    uint16_t *stored = malloc(pixel_count * sizeof(*stored));
+    if (!stored) return;
+
+    for (int y = 0; y < stored_h; y++) {
+        int source_y = (int)(((size_t)y * (size_t)source_h) / (size_t)stored_h);
+        for (int x = 0; x < stored_w; x++) {
+            int source_x = (int)(((size_t)x * (size_t)source_w) / (size_t)stored_w);
+            const unsigned char *pixel = img_data +
+                (((size_t)source_y * (size_t)source_w + (size_t)source_x) * 3u);
+            uint8_t r = pixel[0], g = pixel[1], b = pixel[2];
+            stored[(size_t)y * (size_t)stored_w + (size_t)x] =
+                (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+        }
+    }
+
+    art_buffer = stored;
+    art_w_src = stored_w;
+    art_h_src = stored_h;
+}
 
 static int strcasecmp_simple(const char *s1, const char *s2) {
     while (*s1 && *s2) {
@@ -94,7 +149,9 @@ static void maybe_store_tag(const char *entry, char *artist, char *title, char *
 
 static int parse_ogg_vorbis_tags(const char *path, char *artist, char *title, char *album, int maxlen) {
     int err = 0;
-    stb_vorbis *ogg = stb_vorbis_open_filename(path, &err, NULL);
+    FILE *file = path_fopen_read(path);
+    if (!file) return 0;
+    stb_vorbis *ogg = stb_vorbis_open_file(file, 1, &err, NULL);
     if (!ogg) return 0;
 
     stb_vorbis_comment comments = stb_vorbis_get_comment(ogg);
@@ -136,14 +193,22 @@ static int parse_flac_vorbis_tags(const char *path, char *artist, char *title, c
     ctx.album = album;
     ctx.maxlen = maxlen;
 
-    drflac *flac = drflac_open_file_with_metadata(path, flac_meta_proc, &ctx, NULL);
+    drflac *flac = NULL;
+#ifdef _WIN32
+    wchar_t *wide = path_utf8_to_wide_alloc(path);
+    if (wide) {
+        flac = drflac_open_file_with_metadata_w(wide, flac_meta_proc, &ctx, NULL);
+        free(wide);
+    }
+#endif
+    if (!flac) flac = drflac_open_file_with_metadata(path, flac_meta_proc, &ctx, NULL);
     if (!flac) return 0;
     drflac_close(flac);
     return (title[0] || artist[0]) ? 1 : 0;
 }
 
 int parse_id3v2(const char* path, char* artist, char* title, char* album, int maxlen) {
-    FILE* f = fopen(path, "rb");
+    FILE* f = path_fopen_read(path);
     if (!f) return 0;
 
     // 1. Read and validate header
@@ -259,6 +324,8 @@ void metadata_free_art(void) {
         free(art_buffer);
         art_buffer = NULL;
     }
+    art_w_src = 0;
+    art_h_src = 0;
 }
 
 static void metadata_build_display(const char *track_path, TrackTextMode track_text_mode, char *album_out, size_t album_out_size) {
@@ -276,7 +343,7 @@ static void metadata_build_display(const char *track_path, TrackTextMode track_t
 
         if (!found && ext && strcasecmp_simple(ext, ".mp3") == 0) {
             // Fall back to ID3v1 for MP3s.
-            FILE* f = fopen(track_path, "rb");
+            FILE* f = path_fopen_read(track_path);
             if (f) {
                 if (fseek(f, -128, SEEK_END) == 0) {
                     char tag[3];
@@ -337,6 +404,7 @@ void metadata_load(const char *track_path, const char *m3u_base_path, TrackTextM
     // --- Load Artwork (The 5 Location Search) ---
     metadata_free_art();
     unsigned char* img_data = NULL;
+    int img_w = 0, img_h = 0;
     char path_buf[1024];
     const char* exts[] = { ".jpg", ".jpeg", ".png", ".bmp" };
 
@@ -345,13 +413,17 @@ void metadata_load(const char *track_path, const char *m3u_base_path, TrackTextM
     const char* last_s = strrchr(track_path, '/');
     if (!last_s) last_s = strrchr(track_path, '\\');
     if (last_s) {
-        size_t dir_len = last_s - track_path;
-        strncpy(music_dir, track_path, dir_len);
+        size_t dir_len = (size_t)(last_s - track_path);
+        if (dir_len >= sizeof(music_dir)) dir_len = sizeof(music_dir) - 1;
+        memcpy(music_dir, track_path, dir_len);
         music_dir[dir_len] = '\0';
         const char* p_slash = strrchr(music_dir, '/');
         if (!p_slash) p_slash = strrchr(music_dir, '\\');
-        strncpy(parent_name, p_slash ? p_slash + 1 : music_dir, sizeof(parent_name) - 1);
-        parent_name[sizeof(parent_name) - 1] = '\0';
+        const char *parent = p_slash ? p_slash + 1 : music_dir;
+        size_t parent_len = strlen(parent);
+        if (parent_len >= sizeof(parent_name)) parent_len = sizeof(parent_name) - 1;
+        memcpy(parent_name, parent, parent_len);
+        parent_name[parent_len] = '\0';
     }
 
     // B. Main Search Loop
@@ -365,20 +437,24 @@ void metadata_load(const char *track_path, const char *m3u_base_path, TrackTextM
         } else {
             snprintf(path_buf, sizeof(path_buf), "%s%s", track_path, exts[i]);
         }
-        img_data = stbi_load(path_buf, &art_w_src, &art_h_src, NULL, 3);
+        img_data = load_art_file(path_buf, &img_w, &img_h);
         if (img_data) break;
 
         if (music_dir[0]) {
             // 2. Name of Parent Folder (e.g., C:/Music/AlbumName/AlbumName.jpg)
-            snprintf(path_buf, sizeof(path_buf), "%s/%s%s", music_dir, parent_name, exts[i]);
-            img_data = stbi_load(path_buf, &art_w_src, &art_h_src, NULL, 3);
-            if (img_data) break;
+            int written = snprintf(path_buf, sizeof(path_buf), "%s/%s%s", music_dir, parent_name, exts[i]);
+            if (written > 0 && written < (int)sizeof(path_buf)) {
+                img_data = load_art_file(path_buf, &img_w, &img_h);
+                if (img_data) break;
+            }
 
             // 3. Album Name from Metadata (e.g., C:/Music/AlbumName/MetadataAlbum.jpg)
             if (cur_album[0]) {
-                snprintf(path_buf, sizeof(path_buf), "%s/%s%s", music_dir, cur_album, exts[i]);
-                img_data = stbi_load(path_buf, &art_w_src, &art_h_src, NULL, 3);
-                if (img_data) break;
+                written = snprintf(path_buf, sizeof(path_buf), "%s/%s%s", music_dir, cur_album, exts[i]);
+                if (written > 0 && written < (int)sizeof(path_buf)) {
+                    img_data = load_art_file(path_buf, &img_w, &img_h);
+                    if (img_data) break;
+                }
             }
         }
 
@@ -392,14 +468,14 @@ void metadata_load(const char *track_path, const char *m3u_base_path, TrackTextM
             } else {
                 snprintf(path_buf, sizeof(path_buf), "%s%s", m3u_base_path, exts[i]);
             }
-            img_data = stbi_load(path_buf, &art_w_src, &art_h_src, NULL, 3);
+            img_data = load_art_file(path_buf, &img_w, &img_h);
             if (img_data) break;
         }
     }
 
     // 5. Files Metadata (Aggressive APIC/PIC Scan)
     if (!img_data) {
-        FILE* f_art = fopen(track_path, "rb");
+        FILE* f_art = path_fopen_read(track_path);
         if (f_art) {
             // Scan 1MB: embedded art is often large and offset deep in the header
             size_t scan_size = 1024 * 1024;
@@ -411,12 +487,12 @@ void metadata_load(const char *track_path, const char *m3u_base_path, TrackTextM
                 for (size_t i = 0; i + 10 < bytes_read; i++) {
                     // Check for JPEG (FF D8 FF)
                     if (head[i] == 0xFF && head[i+1] == 0xD8 && head[i+2] == 0xFF) {
-                        img_data = stbi_load_from_memory(head + i, (int)(bytes_read - i), &art_w_src, &art_h_src, NULL, 3);
+                        img_data = load_art_memory(head + i, bytes_read - i, &img_w, &img_h);
                         if (img_data) break;
                     }
                     // Check for PNG (89 50 4E 47)
                     if (head[i] == 0x89 && head[i+1] == 0x50 && head[i+2] == 0x4E && head[i+3] == 0x47) {
-                        img_data = stbi_load_from_memory(head + i, (int)(bytes_read - i), &art_w_src, &art_h_src, NULL, 3);
+                        img_data = load_art_memory(head + i, bytes_read - i, &img_w, &img_h);
                         if (img_data) break;
                     }
                 }
@@ -428,18 +504,7 @@ void metadata_load(const char *track_path, const char *m3u_base_path, TrackTextM
 
     // Prepare for Rendering (RGB565)
     if (img_data) {
-        if (art_w_src > 0 && art_h_src > 0 && art_w_src <= 4096 && art_h_src <= 4096) {
-            size_t pixel_count = (size_t)art_w_src * (size_t)art_h_src;
-            size_t art_size = pixel_count * sizeof(*art_buffer);
-            art_buffer = malloc(art_size);
-            if (art_buffer) {
-                for (size_t i = 0; i < pixel_count; i++) {
-                    const unsigned char *pixel = img_data + (i * 3);
-                    uint8_t r = pixel[0], g = pixel[1], b = pixel[2];
-                    art_buffer[i] = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
-                }
-            }
-        }
+        store_art_rgb565(img_data, img_w, img_h);
         stbi_image_free(img_data);
     }
 }
