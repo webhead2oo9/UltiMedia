@@ -28,7 +28,7 @@ void video_clear(uint16_t bg_color) {
 }
 
 void draw_pixel(int x, int y, uint16_t color) {
-    if (x >= 0 && x < FB_WIDTH && y >= 0 && y < FB_HEIGHT) {
+    if (framebuffer && x >= 0 && x < FB_WIDTH && y >= 0 && y < FB_HEIGHT) {
         framebuffer[y * FB_WIDTH + x] = color;
     }
 }

@@ -1,4 +1,5 @@
 #include "audio.h"
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -6,6 +7,7 @@
 #include "dr_wav.h"
 #include "dr_flac.h"
 #include "stb_vorbis_compat.h"
+#include "path_io.h"
 
 #define AUDIO_STATE_SNAPSHOT_VERSION 1u
 
@@ -23,10 +25,66 @@ static int16_t resample_in_buf[SAMPLES_PER_FRAME * 8 * MAX_CHANNELS];
 static int16_t resample_cache[RESAMPLE_CACHE_FRAMES * MAX_CHANNELS];
 static int resample_cache_frames = 0;
 
-static int clamp_resample_cache_frames(int frames) {
-    if (frames < 0) return 0;
-    if (frames > RESAMPLE_CACHE_FRAMES) return RESAMPLE_CACHE_FRAMES;
-    return frames;
+static bool audio_snapshot_fields_valid(const AudioStateSnapshot *state) {
+    if (!state) return false;
+    if (state->current_type > AUDIO_FLAC) return false;
+    if (state->source_channels < 1 || state->source_channels > MAX_CHANNELS) return false;
+    if (state->resample_cache_frames < 0 || state->resample_cache_frames > RESAMPLE_CACHE_FRAMES)
+        return false;
+    if (!isfinite(state->resample_phase) || state->resample_phase < 0.0 || state->resample_phase >= 1.0)
+        return false;
+    if (state->cur_frame > state->total_frames) return false;
+
+    if ((AudioType)state->current_type == AUDIO_NONE) {
+        return state->source_rate == 0 &&
+               state->total_frames == 0 &&
+               state->cur_frame == 0 &&
+               state->resample_cache_frames == 0;
+    }
+
+    return state->source_rate > 0;
+}
+
+static bool audio_init_mp3_path(drmp3 *mp3, const char *path) {
+#ifdef _WIN32
+    wchar_t *wide = path_utf8_to_wide_alloc(path);
+    if (wide) {
+        bool opened = drmp3_init_file_w(mp3, wide, NULL) != 0;
+        free(wide);
+        if (opened) return true;
+    }
+#endif
+    return drmp3_init_file(mp3, path, NULL) != 0;
+}
+
+static bool audio_init_wav_path(drwav *wav, const char *path) {
+#ifdef _WIN32
+    wchar_t *wide = path_utf8_to_wide_alloc(path);
+    if (wide) {
+        bool opened = drwav_init_file_w(wav, wide, NULL) != 0;
+        free(wide);
+        if (opened) return true;
+    }
+#endif
+    return drwav_init_file(wav, path, NULL) != 0;
+}
+
+static drflac *audio_open_flac_path(const char *path) {
+#ifdef _WIN32
+    wchar_t *wide = path_utf8_to_wide_alloc(path);
+    if (wide) {
+        drflac *flac = drflac_open_file_w(wide, NULL);
+        free(wide);
+        if (flac) return flac;
+    }
+#endif
+    return drflac_open_file(path, NULL);
+}
+
+static stb_vorbis *audio_open_ogg_path(const char *path, int *error) {
+    FILE *file = path_fopen_read(path);
+    if (!file) return NULL;
+    return stb_vorbis_open_file(file, 1, error, NULL);
 }
 
 static void audio_reset_state_fields(void) {
@@ -165,7 +223,7 @@ bool audio_open_track(const char *path) {
 
     if (ext && strcasecmp_simple(ext, ".mp3") == 0) {
         decoder = malloc(sizeof(drmp3));
-        if (decoder && drmp3_init_file((drmp3*)decoder, path, NULL)) {
+        if (decoder && audio_init_mp3_path((drmp3*)decoder, path)) {
             current_type = AUDIO_MP3;
             source_rate = ((drmp3*)decoder)->sampleRate;
             source_channels = ((drmp3*)decoder)->channels;
@@ -174,7 +232,7 @@ bool audio_open_track(const char *path) {
         }
     } else if (ext && strcasecmp_simple(ext, ".ogg") == 0) {
         int err = 0;
-        stb_vorbis* ogg = stb_vorbis_open_filename(path, &err, NULL);
+        stb_vorbis* ogg = audio_open_ogg_path(path, &err);
         if (ogg) {
             current_type = AUDIO_OGG;
             decoder = ogg;
@@ -185,7 +243,7 @@ bool audio_open_track(const char *path) {
             load_success = true;
         }
     } else if (ext && strcasecmp_simple(ext, ".flac") == 0) {
-        drflac* flac = drflac_open_file(path, NULL);
+        drflac* flac = audio_open_flac_path(path);
         if (flac) {
             current_type = AUDIO_FLAC;
             decoder = flac;
@@ -196,7 +254,7 @@ bool audio_open_track(const char *path) {
         }
     } else {
         decoder = malloc(sizeof(drwav));
-        if (decoder && drwav_init_file((drwav*)decoder, path, NULL)) {
+        if (decoder && audio_init_wav_path((drwav*)decoder, path)) {
             current_type = AUDIO_WAV;
             source_rate = ((drwav*)decoder)->sampleRate;
             source_channels = ((drwav*)decoder)->channels;
@@ -215,8 +273,9 @@ bool audio_open_track(const char *path) {
         audio_close();
         return false;
     }
-    // A zero rate would stall the resampler (cur_frame would never advance).
-    if (source_rate == 0) {
+    // A zero rate stalls playback, while rates above the input-buffer ratio
+    // would force the resampler to skip source frames.
+    if (source_rate == 0 || source_rate > (uint32_t)(OUT_RATE * 8)) {
         audio_close();
         return false;
     }
@@ -244,29 +303,21 @@ void audio_capture_state(AudioStateSnapshot *state) {
 }
 
 bool audio_restore_state(const char *path, const AudioStateSnapshot *state) {
-    if (!state || state->version != AUDIO_STATE_SNAPSHOT_VERSION) return false;
-
-    int restored_cache_frames = clamp_resample_cache_frames(state->resample_cache_frames);
+    if (!state || state->version != AUDIO_STATE_SNAPSHOT_VERSION || !audio_snapshot_fields_valid(state))
+        return false;
 
     if ((AudioType)state->current_type == AUDIO_NONE) {
         audio_close();
-        source_rate = state->source_rate;
-        source_channels = state->source_channels;
-        total_frames = state->total_frames;
-        cur_frame = state->cur_frame;
-        resample_phase = state->resample_phase;
-        resample_cache_frames = restored_cache_frames;
-        memcpy(resample_cache, state->resample_cache, sizeof(resample_cache));
         return true;
     }
 
     if (!path || !audio_open_track(path)) return false;
     uint64_t resume_frame = state->cur_frame;
-    if ((uint64_t)restored_cache_frames > UINT64_MAX - resume_frame) {
+    if ((uint64_t)state->resample_cache_frames > UINT64_MAX - resume_frame) {
         audio_close();
         return false;
     }
-    resume_frame += (uint64_t)restored_cache_frames;
+    resume_frame += (uint64_t)state->resample_cache_frames;
     if (current_type != (AudioType)state->current_type ||
         source_rate != state->source_rate ||
         source_channels != state->source_channels ||
@@ -280,7 +331,7 @@ bool audio_restore_state(const char *path, const AudioStateSnapshot *state) {
     audio_seek(resume_frame);
     cur_frame = state->cur_frame;
     resample_phase = state->resample_phase;
-    resample_cache_frames = restored_cache_frames;
+    resample_cache_frames = state->resample_cache_frames;
     memset(resample_cache, 0, sizeof(resample_cache));
     memcpy(resample_cache, state->resample_cache, sizeof(resample_cache));
     return true;
@@ -288,6 +339,9 @@ bool audio_restore_state(const char *path, const AudioStateSnapshot *state) {
 
 void audio_seek(uint64_t frame) {
     cur_frame = frame;
+    resample_phase = 0.0;
+    resample_cache_frames = 0;
+    memset(resample_cache, 0, sizeof(resample_cache));
     if (current_type == AUDIO_MP3) drmp3_seek_to_pcm_frame((drmp3*)decoder, cur_frame);
     else if (current_type == AUDIO_WAV) drwav_seek_to_pcm_frame((drwav*)decoder, cur_frame);
     else if (current_type == AUDIO_OGG) stb_vorbis_seek((stb_vorbis*)decoder, cur_frame);
@@ -358,6 +412,7 @@ int audio_read_frame(int16_t *out_buf) {
 
     resample_phase = new_phase;
     cur_frame += (uint64_t)advance_frames;
+    if (total_frames > 0 && cur_frame > total_frames) cur_frame = total_frames;
 
     int overshoot = (int)total_available - (int)advance_frames;
     if (overshoot < 0) overshoot = 0;

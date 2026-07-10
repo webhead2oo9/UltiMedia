@@ -16,6 +16,7 @@
 #define MAX_ENV_OPTIONS 32
 #define MAX_JOYPAD_IDS 32
 #define MAX_PATH_LEN 1024
+#define TEST_CORE_MAX_TRACKS 256
 
 typedef struct {
     const char *key;
@@ -32,6 +33,33 @@ typedef struct {
     const char *name;
     TestFn fn;
 } TestCase;
+
+typedef struct {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t content_hash;
+    uint32_t track_count;
+    int32_t current_idx;
+    int32_t viz_mode;
+    int32_t scroll_x;
+    int32_t legacy_debounce;
+    int32_t ff_rw_icon_timer;
+    int32_t ff_rw_dir;
+    uint8_t is_paused;
+    uint8_t is_shuffle;
+    uint8_t reserved[2];
+    uint32_t shuffle_seed;
+    uint32_t shuffle_state;
+    uint32_t shuffle_count;
+    uint32_t shuffle_pos;
+    uint32_t shuffle_history_count;
+    uint32_t shuffle_history_pos;
+    AudioStateSnapshot audio;
+    int32_t shuffle_order[TEST_CORE_MAX_TRACKS];
+    int32_t shuffle_history[TEST_CORE_MAX_TRACKS];
+    uint32_t m3u_base_path_len;
+    uint32_t track_path_lens[TEST_CORE_MAX_TRACKS];
+} TestCoreStateSnapshot;
 
 static EnvOption g_env_options[MAX_ENV_OPTIONS];
 static int g_env_option_count = 0;
@@ -53,6 +81,7 @@ extern void retro_set_audio_sample_batch(retro_audio_sample_batch_t cb);
 extern void retro_set_video_refresh(retro_video_refresh_t cb);
 extern void retro_set_input_poll(retro_input_poll_t cb);
 extern void retro_set_input_state(retro_input_state_t cb);
+extern void retro_get_system_info(struct retro_system_info *info);
 
 static void clear_env_options(void) {
     g_env_option_count = 0;
@@ -259,6 +288,165 @@ static bool test_playlist_navigation(TestContext *ctx) {
     if (!require_true(core_debug_get_current_index() == 3, "playlist_navigation: expected wrap to current index 3"))
         return false;
     if (!require_true(current_track_is("track_d.wav"), "playlist_navigation: expected track_d.wav after wrap"))
+        return false;
+    return true;
+}
+
+static bool test_utf16_unicode_playlists(TestContext *ctx) {
+    const char *playlist_names[] = { "playlist_utf16le.m3u", "playlist_utf16be.m3u" };
+    char path[MAX_PATH_LEN];
+
+    for (size_t i = 0; i < sizeof(playlist_names) / sizeof(playlist_names[0]); i++) {
+        prepare_test();
+        build_path(path, sizeof(path), ctx->fixtures_dir, playlist_names[i]);
+
+        if (!load_game_path(path))
+            return failf("utf16_unicode_playlists: failed to load %s", path);
+        if (!require_true(core_debug_get_track_count() == 1,
+                          "utf16_unicode_playlists: expected one track for %s", playlist_names[i]))
+            return false;
+        if (!require_true(current_track_is("unicode_音.wav"),
+                          "utf16_unicode_playlists: Unicode track did not open for %s", playlist_names[i]))
+            return false;
+
+        run_frames(2);
+        if (!require_true(cur_frame > 0,
+                          "utf16_unicode_playlists: playback did not advance for %s", playlist_names[i]))
+            return false;
+    }
+
+    return true;
+}
+
+static bool test_bad_track_skipping(TestContext *ctx) {
+    char path[MAX_PATH_LEN];
+    prepare_test();
+    build_path(path, sizeof(path), ctx->fixtures_dir, "playlist_missing_middle.m3u");
+
+    if (!load_game_path(path))
+        return failf("bad_track_skipping: failed to load %s", path);
+    if (!require_true(current_track_is("track_a.wav"), "bad_track_skipping: expected track_a.wav first"))
+        return false;
+
+    tap_button(RETRO_DEVICE_ID_JOYPAD_R);
+    if (!require_true(core_debug_get_current_index() == 2,
+                      "bad_track_skipping: expected missing index 1 to be skipped"))
+        return false;
+    if (!require_true(current_track_is("track_b.wav"), "bad_track_skipping: expected track_b.wav after skip"))
+        return false;
+
+    prepare_test();
+    build_path(path, sizeof(path), ctx->fixtures_dir, "playlist_all_bad.m3u");
+    if (!require_true(!load_game_path(path), "bad_track_skipping: all-bad playlist was accepted"))
+        return false;
+    if (!require_true(core_debug_get_track_count() == 0 && decoder == NULL,
+                      "bad_track_skipping: failed load retained playback state"))
+        return false;
+    return true;
+}
+
+static bool test_unsupported_sample_rate_is_rejected(TestContext *ctx) {
+    char path[MAX_PATH_LEN];
+    prepare_test();
+    build_path(path, sizeof(path), ctx->fixtures_dir, "unsupported_rate.wav");
+
+    if (!require_true(!load_game_path(path),
+                      "unsupported_sample_rate_is_rejected: 768 kHz source was accepted"))
+        return false;
+    if (!require_true(core_debug_get_track_count() == 0 && decoder == NULL,
+                      "unsupported_sample_rate_is_rejected: failed load retained state"))
+        return false;
+    return true;
+}
+
+static bool test_seek_tap_and_repeat(TestContext *ctx) {
+    char path[MAX_PATH_LEN];
+    uint64_t before_seek;
+    uint64_t after_first_seek;
+    uint64_t before_repeat;
+    uint64_t before_backward;
+
+    prepare_test();
+    build_path(path, sizeof(path), ctx->fixtures_dir, "seek_long.wav");
+    if (!load_game_path(path))
+        return failf("seek_tap_and_repeat: failed to load %s", path);
+
+    run_frames(5);
+    before_seek = cur_frame;
+    g_pressed[RETRO_DEVICE_ID_JOYPAD_RIGHT] = true;
+    retro_run();
+    after_first_seek = cur_frame;
+    if (!require_true(after_first_seek > before_seek + (uint64_t)source_rate * 2u,
+                      "seek_tap_and_repeat: forward tap did not seek about three seconds"))
+        return false;
+
+    before_repeat = cur_frame;
+    run_frames(5);
+    if (!require_true(cur_frame < before_repeat + (uint64_t)source_rate,
+                      "seek_tap_and_repeat: held seek repeated before cooldown expired"))
+        return false;
+    retro_run();
+    if (!require_true(cur_frame > before_repeat + (uint64_t)source_rate * 2u,
+                      "seek_tap_and_repeat: held seek did not repeat after cooldown"))
+        return false;
+
+    g_pressed[RETRO_DEVICE_ID_JOYPAD_RIGHT] = false;
+    retro_run();
+    before_backward = cur_frame;
+    g_pressed[RETRO_DEVICE_ID_JOYPAD_LEFT] = true;
+    retro_run();
+    g_pressed[RETRO_DEVICE_ID_JOYPAD_LEFT] = false;
+    if (!require_true(cur_frame + (uint64_t)source_rate * 2u < before_backward,
+                      "seek_tap_and_repeat: backward tap did not seek about three seconds"))
+        return false;
+    return true;
+}
+
+static bool test_short_track_position_is_bounded(TestContext *ctx) {
+    char path[MAX_PATH_LEN];
+    prepare_test();
+    build_path(path, sizeof(path), ctx->fixtures_dir, "short.wav");
+
+    if (!load_game_path(path))
+        return failf("short_track_position_is_bounded: failed to load %s", path);
+    if (!require_true(total_frames > 0 && total_frames < SAMPLES_PER_FRAME,
+                      "short_track_position_is_bounded: fixture was not shorter than one output frame"))
+        return false;
+
+    retro_run();
+    if (!require_true(cur_frame <= total_frames,
+                      "short_track_position_is_bounded: cur_frame exceeded total_frames"))
+        return false;
+    return true;
+}
+
+static bool test_artwork_is_downscaled(TestContext *ctx) {
+    char path[MAX_PATH_LEN];
+    prepare_test();
+    build_path(path, sizeof(path), ctx->fixtures_dir, "art_track.wav");
+
+    if (!load_game_path(path))
+        return failf("artwork_is_downscaled: failed to load %s", path);
+    if (!require_true(art_buffer != NULL, "artwork_is_downscaled: expected sidecar artwork to load"))
+        return false;
+    if (!require_true(art_w_src == 120 && art_h_src == 120,
+                      "artwork_is_downscaled: expected 120x120 stored art, got %dx%d", art_w_src, art_h_src))
+        return false;
+    run_frames(2);
+    return true;
+}
+
+static bool test_core_identity_matches_info(TestContext *ctx) {
+    struct retro_system_info info;
+    (void)ctx;
+    memset(&info, 0, sizeof(info));
+    retro_get_system_info(&info);
+
+    if (!require_true(info.library_name && strcmp(info.library_name, "Music Playlist Core") == 0,
+                      "core_identity_matches_info: unexpected library name"))
+        return false;
+    if (!require_true(info.library_version && strcmp(info.library_version, "1.0") == 0,
+                      "core_identity_matches_info: unexpected library version"))
         return false;
     return true;
 }
@@ -629,6 +817,71 @@ done:
     return ok;
 }
 
+static bool test_malformed_save_states_are_rejected(TestContext *ctx) {
+    char path[MAX_PATH_LEN];
+    size_t state_size;
+    void *state_data = NULL;
+    TestCoreStateSnapshot *snapshot;
+    uint64_t before_frames;
+    uint32_t saved_magic;
+    uint32_t saved_audio_type;
+    double saved_phase;
+    bool ok = false;
+
+    prepare_test();
+    build_path(path, sizeof(path), ctx->fixtures_dir, "track_a.wav");
+    if (!load_game_path(path))
+        return failf("malformed_save_states: failed to load %s", path);
+    run_frames(4);
+
+    state_size = retro_serialize_size();
+    if (!require_true(state_size > sizeof(TestCoreStateSnapshot),
+                      "malformed_save_states: state was smaller than expected snapshot"))
+        return false;
+    state_data = malloc(state_size);
+    if (!state_data) return failf("malformed_save_states: failed to allocate %zu bytes", state_size);
+    if (!require_true(retro_serialize(state_data, state_size), "malformed_save_states: serialize failed"))
+        goto done;
+
+    snapshot = (TestCoreStateSnapshot*)state_data;
+    before_frames = cur_frame;
+
+    if (!require_true(!retro_unserialize(state_data, sizeof(TestCoreStateSnapshot) - 1),
+                      "malformed_save_states: truncated state was accepted"))
+        goto done;
+
+    saved_magic = snapshot->magic;
+    snapshot->magic ^= 0xFFFFFFFFu;
+    if (!require_true(!retro_unserialize(state_data, state_size),
+                      "malformed_save_states: corrupt magic was accepted"))
+        goto done;
+    snapshot->magic = saved_magic;
+
+    saved_audio_type = snapshot->audio.current_type;
+    snapshot->audio.current_type = AUDIO_NONE;
+    if (!require_true(!retro_unserialize(state_data, state_size),
+                      "malformed_save_states: inconsistent AUDIO_NONE state was accepted"))
+        goto done;
+    snapshot->audio.current_type = saved_audio_type;
+
+    saved_phase = snapshot->audio.resample_phase;
+    snapshot->audio.resample_phase = NAN;
+    if (!require_true(!retro_unserialize(state_data, state_size),
+                      "malformed_save_states: non-finite resampler phase was accepted"))
+        goto done;
+    snapshot->audio.resample_phase = saved_phase;
+
+    run_frames(2);
+    if (!require_true(cur_frame > before_frames,
+                      "malformed_save_states: playback did not remain usable after rejected states"))
+        goto done;
+
+    ok = true;
+done:
+    free(state_data);
+    return ok;
+}
+
 static bool test_config_layout_smoke(TestContext *ctx) {
     char path[MAX_PATH_LEN];
 
@@ -800,6 +1053,13 @@ static bool test_track_change_resets_fft_visualizer_state(TestContext *ctx) {
 static const TestCase kTests[] = {
     { "basic_load_play", test_basic_load_play },
     { "playlist_navigation", test_playlist_navigation },
+    { "utf16_unicode_playlists", test_utf16_unicode_playlists },
+    { "bad_track_skipping", test_bad_track_skipping },
+    { "unsupported_sample_rate_is_rejected", test_unsupported_sample_rate_is_rejected },
+    { "seek_tap_and_repeat", test_seek_tap_and_repeat },
+    { "short_track_position_is_bounded", test_short_track_position_is_bounded },
+    { "artwork_is_downscaled", test_artwork_is_downscaled },
+    { "core_identity_matches_info", test_core_identity_matches_info },
     { "save_state_restore_track_and_position", test_save_state_restore_track_and_position },
     { "pause_state_restore", test_pause_state_restore },
     { "reset_preserves_shuffle_and_restarts_current_track", test_reset_preserves_shuffle_and_restarts_current_track },
@@ -808,6 +1068,7 @@ static const TestCase kTests[] = {
     { "shuffle_previous_after_eof_returns_finished_track", test_shuffle_previous_after_eof_returns_finished_track },
     { "shuffle_save_state_restores_previous_history", test_shuffle_save_state_restores_previous_history },
     { "negative_restore_keeps_playback_usable", test_negative_restore_keeps_playback_usable },
+    { "malformed_save_states_are_rejected", test_malformed_save_states_are_rejected },
     { "config_layout_smoke", test_config_layout_smoke },
     { "vu_mode_updates_once_per_frame", test_vu_mode_updates_once_per_frame },
     { "track_change_resets_fft_visualizer_state", test_track_change_resets_fft_visualizer_state },

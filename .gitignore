@@ -3,6 +3,8 @@ music_playlist_libretro.dylib
 music_playlist_libretro.dll
 music_playlist_libretro.so
 localscripts/
+__pycache__/
+*.pyc
 
 # clang --analyze artifacts
 *.plist

@@ -17,6 +17,7 @@
 #include "metadata.h"
 #include "visualizer.h"
 #include "core_log.h"
+#include "path_io.h"
 
 #define CORE_MAX_TRACKS 256
 #define CORE_MAX_PATH 1024
@@ -166,6 +167,12 @@ static void draw_rect_outline(int x, int y, int w, int h, uint16_t color) {
         draw_pixel(x, py, color);
         draw_pixel(x2, py, color);
     }
+}
+
+static int playback_progress_width(int width) {
+    if (width <= 0 || total_frames == 0 || cur_frame == 0) return 0;
+    if (cur_frame >= total_frames) return width;
+    return (int)(((double)cur_frame / (double)total_frames) * (double)width);
 }
 
 // Helper function for case-insensitive string comparison
@@ -786,15 +793,15 @@ void retro_run(void) {
             // Decoder seeks are costly (MP3 backward seeks re-decode from the
             // start of the file), so a held button repeats at 10 Hz, not 60.
             seek_repeat_cooldown = 6;
-            int seek_speed = source_rate * 3;
+            uint64_t seek_speed = (uint64_t)source_rate * 3u;
             if (seek_fwd) {
-                uint64_t next = cur_frame + (uint64_t)seek_speed;
+                uint64_t next = cur_frame + seek_speed;
                 if (next < cur_frame) next = cur_frame; // overflow guard
                 if (total_frames > 0 && next >= total_frames) next = total_frames - 1;
                 audio_seek(next);
                 ff_rw_icon_timer = 15; ff_rw_dir = 1;
             } else {
-                uint64_t next = (cur_frame < (uint64_t)seek_speed) ? 0 : cur_frame - (uint64_t)seek_speed;
+                uint64_t next = (cur_frame < seek_speed) ? 0 : cur_frame - seek_speed;
                 audio_seek(next);
                 ff_rw_icon_timer = 15; ff_rw_dir = -1;
             }
@@ -865,9 +872,9 @@ void retro_run(void) {
         }
 
         if (cfg.show_bar && total_frames > 0 && layout.bar.w > 0) {
-            float p = (float)cur_frame / total_frames;
+            int filled_w = playback_progress_width(layout.bar.w);
             for (int w = 0; w < layout.bar.w; w++) draw_pixel(layout.bar.x + w, layout.bar.y, cfg.bg_rgb | 0x18C3);
-            for (int w = 0; w < (int)(p * layout.bar.w); w++) draw_pixel(layout.bar.x + w, layout.bar.y, cfg.fg_rgb);
+            for (int w = 0; w < filled_w; w++) draw_pixel(layout.bar.x + w, layout.bar.y, cfg.fg_rgb);
         }
 
         if (cfg.show_tim && layout.time.w > 0) {
@@ -914,9 +921,9 @@ void retro_run(void) {
             viz_draw();
         }
         if (cfg.show_bar && total_frames > 0) {
-            float p = (float)cur_frame / (float)total_frames;
+            int filled_w = playback_progress_width(200);
             for (int w = 0; w < 200; w++) draw_pixel(60 + w, cfg.bar_y, cfg.bg_rgb | 0x18C3);
-            for (int w = 0; w < (int)(p * 200); w++) draw_pixel(60 + w, cfg.bar_y, cfg.fg_rgb);
+            for (int w = 0; w < filled_w; w++) draw_pixel(60 + w, cfg.bar_y, cfg.fg_rgb);
         }
         if (cfg.show_tim) {
             int sec = source_rate ? (int)(cur_frame / source_rate) : 0;
@@ -947,6 +954,8 @@ void retro_set_environment(retro_environment_t cb) {
 bool retro_load_game(const struct retro_game_info *g) {
     if (!g || !g->path) return false;
 
+    audio_close();
+    metadata_free_art();
     free_tracks();
     current_idx = 0;
     m3u_base_path[0] = '\0';
@@ -958,7 +967,7 @@ bool retro_load_game(const struct retro_game_info *g) {
     if (ext && strcasecmp_simple(ext, ".m3u") == 0) {
         core_log(RETRO_LOG_DEBUG, "[MusicCore] Attempting to open M3U: %s\n", g->path);
 
-        FILE *f = fopen(g->path, "rb");
+        FILE *f = path_fopen_read(g->path);
         if (!f) {
             core_log(RETRO_LOG_ERROR, "[MusicCore] Failed to open M3U at %s\n", g->path);
             return false;
@@ -1050,18 +1059,33 @@ bool retro_load_game(const struct retro_game_info *g) {
         track_count++;
     }
 
-    if (track_count == 0) return false;
+    if (track_count == 0) {
+        m3u_base_path[0] = '\0';
+        return false;
+    }
 
     start_shuffle_cycle(generate_shuffle_seed());
     apply_config_update();
     if (cfg.responsive)
         layout_compute();
 
-    if (!open_track(0)) {
+    bool opened = open_track(0);
+    if (!opened) {
         // Skip past unreadable leading tracks so the playlist still starts.
         for (int i = 1; i < track_count; i++) {
-            if (open_track(i)) break;
+            if (open_track(i)) {
+                opened = true;
+                break;
+            }
         }
+    }
+    if (!opened) {
+        audio_close();
+        metadata_free_art();
+        free_tracks();
+        current_idx = 0;
+        m3u_base_path[0] = '\0';
+        return false;
     }
     return true;
 }
@@ -1087,8 +1111,8 @@ void retro_set_input_poll(retro_input_poll_t cb) { input_poll_cb = cb; }
 void retro_set_input_state(retro_input_state_t cb) { input_state_cb = cb; }
 unsigned retro_api_version(void) { return RETRO_API_VERSION; }
 void retro_get_system_info(struct retro_system_info *i) {
-    i->library_name = "UltiMedia UGC";
-    i->library_version = "17.0";
+    i->library_name = "Music Playlist Core";
+    i->library_version = "1.0";
     i->valid_extensions = "mp3|wav|m3u|ogg|flac";
     i->need_fullpath = true;
 }
@@ -1235,9 +1259,13 @@ bool retro_unserialize(const void *d, size_t s) {
     metadata_load(tracks[current_idx], m3u_base_path, cfg.track_text_mode);
     is_paused = state->is_paused != 0;
     is_shuffle = state->is_shuffle != 0;
+    int min_scroll_x = -((int)strlen(display_str) * 8);
     scroll_x = state->scroll_x;
+    if (scroll_x < min_scroll_x || scroll_x > FB_WIDTH) scroll_x = FB_WIDTH;
     ff_rw_icon_timer = state->ff_rw_icon_timer;
-    ff_rw_dir = state->ff_rw_dir;
+    if (ff_rw_icon_timer < 0) ff_rw_icon_timer = 0;
+    if (ff_rw_icon_timer > 15) ff_rw_icon_timer = 15;
+    ff_rw_dir = (state->ff_rw_dir > 0) ? 1 : ((state->ff_rw_dir < 0) ? -1 : 0);
     shuffle_seed = sanitize_seed(state->shuffle_seed ? state->shuffle_seed : current_content_hash());
     shuffle_state = sanitize_seed(state->shuffle_state ? state->shuffle_state : shuffle_seed);
     shuffle_count = (int)state->shuffle_count;

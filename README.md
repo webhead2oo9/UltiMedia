@@ -129,7 +129,9 @@ Run the native test harness locally with:
 python3 tests/run_tests.py
 ```
 
-This command generates temporary WAV and `.m3u` fixtures at runtime, compiles a native harness, and exercises playback, playlist navigation, shuffle, reset, and save-state behavior.
+This command generates temporary audio, artwork, and playlist fixtures at runtime, compiles a native harness, and exercises playback, UTF-8/UTF-16 playlist navigation, seeking, bad-track handling, artwork scaling, shuffle, reset, and save-state behavior.
+
+Set `CFLAGS` to add compiler instrumentation or diagnostics to the harness build, for example `CFLAGS="-fsanitize=address,undefined"` on a supported compiler.
 
 Windows local testing is supported through `MSYS2 UCRT64`. On macOS and Linux, the runner uses the system `cc` compiler by default.
 
