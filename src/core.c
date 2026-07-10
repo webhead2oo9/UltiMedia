@@ -977,14 +977,7 @@ bool retro_load_game(const struct retro_game_info *g) {
         detect_m3u_encoding(f, &m3u_utf16_le, &m3u_utf16_be);
         strncpy(m3u_base_path, g->path, CORE_MAX_PATH - 1);
         m3u_base_path[sizeof(m3u_base_path) - 1] = '\0';
-        const char* last = strrchr(g->path, '/');
-        if (!last) last = strrchr(g->path, '\\');
-        if (last) {
-            size_t dir_len = (size_t)(last - g->path);
-            if (dir_len >= sizeof(m3u_dir)) dir_len = sizeof(m3u_dir) - 1;
-            memcpy(m3u_dir, g->path, dir_len);
-            m3u_dir[dir_len] = '\0';
-        } else {
+        if (!path_dirname(g->path, m3u_dir, sizeof(m3u_dir))) {
             strncpy(m3u_dir, ".", sizeof(m3u_dir) - 1);
             m3u_dir[sizeof(m3u_dir) - 1] = '\0';
         }

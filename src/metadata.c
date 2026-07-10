@@ -105,14 +105,8 @@ static void clean_meta_text(char *s) {
     }
 }
 
-static const char *basename_ptr(const char *path) {
-    const char *b = strrchr(path, '/');
-    if (!b) b = strrchr(path, '\\');
-    return b ? b + 1 : path;
-}
-
 static void set_display_from_filename(const char *track_path, int strip_ext) {
-    const char *base = basename_ptr(track_path);
+    const char *base = path_basename(track_path);
     size_t len = strlen(base);
     if (strip_ext) {
         const char *dot = strrchr(base, '.');
@@ -194,15 +188,11 @@ static int parse_flac_vorbis_tags(const char *path, char *artist, char *title, c
     ctx.album = album;
     ctx.maxlen = maxlen;
 
-    drflac *flac = NULL;
-#ifdef _WIN32
-    wchar_t *wide = path_utf8_to_wide_alloc(path);
-    if (wide) {
-        flac = drflac_open_file_with_metadata_w(wide, flac_meta_proc, &ctx, NULL);
-        free(wide);
-    }
-#endif
-    if (!flac) flac = drflac_open_file_with_metadata(path, flac_meta_proc, &ctx, NULL);
+    drflac *flac;
+    PATH_OPEN_WIDE_THEN_NARROW(flac, path,
+                               drflac_open_file_with_metadata_w(wide, flac_meta_proc, &ctx, NULL),
+                               drflac_open_file_with_metadata(path, flac_meta_proc, &ctx, NULL),
+                               (drflac*)NULL);
     if (!flac) return 0;
     drflac_close(flac);
     return (title[0] || artist[0]) ? 1 : 0;
@@ -411,16 +401,8 @@ void metadata_load(const char *track_path, const char *m3u_base_path, TrackTextM
 
     // A. Setup Directory Strings for the Music File
     char music_dir[1024] = {0}, parent_name[256] = {0};
-    const char* last_s = strrchr(track_path, '/');
-    if (!last_s) last_s = strrchr(track_path, '\\');
-    if (last_s) {
-        size_t dir_len = (size_t)(last_s - track_path);
-        if (dir_len >= sizeof(music_dir)) dir_len = sizeof(music_dir) - 1;
-        memcpy(music_dir, track_path, dir_len);
-        music_dir[dir_len] = '\0';
-        const char* p_slash = strrchr(music_dir, '/');
-        if (!p_slash) p_slash = strrchr(music_dir, '\\');
-        const char *parent = p_slash ? p_slash + 1 : music_dir;
+    if (path_dirname(track_path, music_dir, sizeof(music_dir))) {
+        const char *parent = path_basename(music_dir);
         size_t parent_len = strlen(parent);
         if (parent_len >= sizeof(parent_name)) parent_len = sizeof(parent_name) - 1;
         memcpy(parent_name, parent, parent_len);

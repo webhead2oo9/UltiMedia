@@ -49,39 +49,30 @@ static bool audio_snapshot_fields_valid(const AudioStateSnapshot *state) {
 }
 
 static bool audio_init_mp3_path(drmp3 *mp3, const char *path) {
-#ifdef _WIN32
-    wchar_t *wide = path_utf8_to_wide_alloc(path);
-    if (wide) {
-        bool opened = drmp3_init_file_w(mp3, wide, NULL) != 0;
-        free(wide);
-        if (opened) return true;
-    }
-#endif
-    return drmp3_init_file(mp3, path, NULL) != 0;
+    bool opened;
+    PATH_OPEN_WIDE_THEN_NARROW(opened, path,
+                               drmp3_init_file_w(mp3, wide, NULL) != 0,
+                               drmp3_init_file(mp3, path, NULL) != 0,
+                               false);
+    return opened;
 }
 
 static bool audio_init_wav_path(drwav *wav, const char *path) {
-#ifdef _WIN32
-    wchar_t *wide = path_utf8_to_wide_alloc(path);
-    if (wide) {
-        bool opened = drwav_init_file_w(wav, wide, NULL) != 0;
-        free(wide);
-        if (opened) return true;
-    }
-#endif
-    return drwav_init_file(wav, path, NULL) != 0;
+    bool opened;
+    PATH_OPEN_WIDE_THEN_NARROW(opened, path,
+                               drwav_init_file_w(wav, wide, NULL) != 0,
+                               drwav_init_file(wav, path, NULL) != 0,
+                               false);
+    return opened;
 }
 
 static drflac *audio_open_flac_path(const char *path) {
-#ifdef _WIN32
-    wchar_t *wide = path_utf8_to_wide_alloc(path);
-    if (wide) {
-        drflac *flac = drflac_open_file_w(wide, NULL);
-        free(wide);
-        if (flac) return flac;
-    }
-#endif
-    return drflac_open_file(path, NULL);
+    drflac *flac;
+    PATH_OPEN_WIDE_THEN_NARROW(flac, path,
+                               drflac_open_file_w(wide, NULL),
+                               drflac_open_file(path, NULL),
+                               (drflac*)NULL);
+    return flac;
 }
 
 static stb_vorbis *audio_open_ogg_path(const char *path, int *error) {
