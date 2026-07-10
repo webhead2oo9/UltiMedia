@@ -17,9 +17,9 @@
 #include "metadata.h"
 #include "visualizer.h"
 #include "core_log.h"
+#include "core_state.h"
 #include "path_io.h"
 
-#define CORE_MAX_TRACKS 256
 #define CORE_MAX_PATH 1024
 #define CORE_STATE_MAGIC 0x554D5354u
 #define CORE_STATE_VERSION 2u
@@ -90,33 +90,6 @@ static const struct retro_input_descriptor input_descriptors[] = {
     {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y, "Toggle Shuffle"},
     {0},
 };
-
-typedef struct {
-    uint32_t magic;
-    uint32_t version;
-    uint32_t content_hash;
-    uint32_t track_count;
-    int32_t current_idx;
-    int32_t viz_mode;
-    int32_t scroll_x;
-    int32_t legacy_debounce; // unused since edge-triggered input; keeps layout stable
-    int32_t ff_rw_icon_timer;
-    int32_t ff_rw_dir;
-    uint8_t is_paused;
-    uint8_t is_shuffle;
-    uint8_t reserved[2];
-    uint32_t shuffle_seed;
-    uint32_t shuffle_state;
-    uint32_t shuffle_count;
-    uint32_t shuffle_pos;
-    uint32_t shuffle_history_count;
-    uint32_t shuffle_history_pos;
-    AudioStateSnapshot audio;
-    int32_t shuffle_order[CORE_MAX_TRACKS];
-    int32_t shuffle_history[CORE_MAX_TRACKS];
-    uint32_t m3u_base_path_len;
-    uint32_t track_path_lens[CORE_MAX_TRACKS];
-} CoreStateSnapshot;
 
 // Forward declarations
 static bool open_track(int idx);

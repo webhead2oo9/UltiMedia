@@ -9,14 +9,18 @@
 #include "audio.h"
 #include "config.h"
 #include "core_debug.h"
+#include "core_state.h"
 #include "libretro.h"
 #include "metadata.h"
 #include "visualizer.h"
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #define MAX_ENV_OPTIONS 32
 #define MAX_JOYPAD_IDS 32
 #define MAX_PATH_LEN 1024
-#define TEST_CORE_MAX_TRACKS 256
 
 typedef struct {
     const char *key;
@@ -33,33 +37,6 @@ typedef struct {
     const char *name;
     TestFn fn;
 } TestCase;
-
-typedef struct {
-    uint32_t magic;
-    uint32_t version;
-    uint32_t content_hash;
-    uint32_t track_count;
-    int32_t current_idx;
-    int32_t viz_mode;
-    int32_t scroll_x;
-    int32_t legacy_debounce;
-    int32_t ff_rw_icon_timer;
-    int32_t ff_rw_dir;
-    uint8_t is_paused;
-    uint8_t is_shuffle;
-    uint8_t reserved[2];
-    uint32_t shuffle_seed;
-    uint32_t shuffle_state;
-    uint32_t shuffle_count;
-    uint32_t shuffle_pos;
-    uint32_t shuffle_history_count;
-    uint32_t shuffle_history_pos;
-    AudioStateSnapshot audio;
-    int32_t shuffle_order[TEST_CORE_MAX_TRACKS];
-    int32_t shuffle_history[TEST_CORE_MAX_TRACKS];
-    uint32_t m3u_base_path_len;
-    uint32_t track_path_lens[TEST_CORE_MAX_TRACKS];
-} TestCoreStateSnapshot;
 
 static EnvOption g_env_options[MAX_ENV_OPTIONS];
 static int g_env_option_count = 0;
@@ -436,17 +413,61 @@ static bool test_artwork_is_downscaled(TestContext *ctx) {
     return true;
 }
 
+// Read a `key = "value"` entry from the core's .info file. run_tests.py
+// runs the harness from the repo root, so the file is reachable by name.
+static bool read_info_string(const char *key, char *out, size_t out_size) {
+    FILE *f = fopen("music_playlist_libretro.info", "r");
+    char line[512];
+    bool found = false;
+
+    if (!f || out_size == 0) {
+        if (f) fclose(f);
+        return false;
+    }
+    while (!found && fgets(line, sizeof(line), f)) {
+        const char *p = line;
+        size_t key_len = strlen(key);
+        while (*p == ' ' || *p == '\t') p++;
+        if (strncmp(p, key, key_len) != 0) continue;
+        p += key_len;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p != '=') continue;
+        const char *open_quote = strchr(p + 1, '"');
+        if (!open_quote) continue;
+        const char *close_quote = strchr(open_quote + 1, '"');
+        if (!close_quote) continue;
+        size_t len = (size_t)(close_quote - open_quote - 1);
+        if (len >= out_size) len = out_size - 1;
+        memcpy(out, open_quote + 1, len);
+        out[len] = '\0';
+        found = true;
+    }
+    fclose(f);
+    return found;
+}
+
 static bool test_core_identity_matches_info(TestContext *ctx) {
     struct retro_system_info info;
+    char info_name[128];
+    char info_version[64];
     (void)ctx;
     memset(&info, 0, sizeof(info));
     retro_get_system_info(&info);
 
-    if (!require_true(info.library_name && strcmp(info.library_name, "Music Playlist Core") == 0,
-                      "core_identity_matches_info: unexpected library name"))
+    if (!require_true(read_info_string("display_name", info_name, sizeof(info_name)),
+                      "core_identity_matches_info: could not read display_name from music_playlist_libretro.info"))
         return false;
-    if (!require_true(info.library_version && strcmp(info.library_version, "1.0") == 0,
-                      "core_identity_matches_info: unexpected library version"))
+    if (!require_true(read_info_string("display_version", info_version, sizeof(info_version)),
+                      "core_identity_matches_info: could not read display_version from music_playlist_libretro.info"))
+        return false;
+
+    if (!require_true(info.library_name && strcmp(info.library_name, info_name) == 0,
+                      "core_identity_matches_info: library_name '%s' does not match .info display_name '%s'",
+                      info.library_name ? info.library_name : "(null)", info_name))
+        return false;
+    if (!require_true(info.library_version && strcmp(info.library_version, info_version) == 0,
+                      "core_identity_matches_info: library_version '%s' does not match .info display_version '%s'",
+                      info.library_version ? info.library_version : "(null)", info_version))
         return false;
     return true;
 }
@@ -821,7 +842,7 @@ static bool test_malformed_save_states_are_rejected(TestContext *ctx) {
     char path[MAX_PATH_LEN];
     size_t state_size;
     void *state_data = NULL;
-    TestCoreStateSnapshot *snapshot;
+    CoreStateSnapshot *snapshot;
     uint64_t before_frames;
     uint32_t saved_magic;
     uint32_t saved_audio_type;
@@ -835,7 +856,7 @@ static bool test_malformed_save_states_are_rejected(TestContext *ctx) {
     run_frames(4);
 
     state_size = retro_serialize_size();
-    if (!require_true(state_size > sizeof(TestCoreStateSnapshot),
+    if (!require_true(state_size > sizeof(CoreStateSnapshot),
                       "malformed_save_states: state was smaller than expected snapshot"))
         return false;
     state_data = malloc(state_size);
@@ -843,10 +864,10 @@ static bool test_malformed_save_states_are_rejected(TestContext *ctx) {
     if (!require_true(retro_serialize(state_data, state_size), "malformed_save_states: serialize failed"))
         goto done;
 
-    snapshot = (TestCoreStateSnapshot*)state_data;
+    snapshot = (CoreStateSnapshot*)state_data;
     before_frames = cur_frame;
 
-    if (!require_true(!retro_unserialize(state_data, sizeof(TestCoreStateSnapshot) - 1),
+    if (!require_true(!retro_unserialize(state_data, sizeof(CoreStateSnapshot) - 1),
                       "malformed_save_states: truncated state was accepted"))
         goto done;
 
@@ -1074,6 +1095,22 @@ static const TestCase kTests[] = {
     { "track_change_resets_fft_visualizer_state", test_track_change_resets_fft_visualizer_state },
 };
 
+#ifdef _WIN32
+// Narrow argv arrives in the ANSI code page, but the core treats paths as
+// UTF-8 (UTF-16 playlist entries are decoded to UTF-8 before path
+// concatenation), so a fixtures dir containing non-ASCII characters must
+// be re-encoded to keep the combined paths openable.
+static const char *argv_path_to_utf8(const char *arg) {
+    static char utf8_buf[MAX_PATH_LEN * 4];
+    wchar_t wide_buf[MAX_PATH_LEN];
+    if (MultiByteToWideChar(CP_ACP, 0, arg, -1, wide_buf, MAX_PATH_LEN) <= 0)
+        return arg;
+    if (WideCharToMultiByte(CP_UTF8, 0, wide_buf, -1, utf8_buf, (int)sizeof(utf8_buf), NULL, NULL) <= 0)
+        return arg;
+    return utf8_buf;
+}
+#endif
+
 int main(int argc, char **argv) {
     TestContext ctx;
     size_t passed = 0;
@@ -1085,6 +1122,9 @@ int main(int argc, char **argv) {
     }
 
     ctx.fixtures_dir = argv[1];
+#ifdef _WIN32
+    ctx.fixtures_dir = argv_path_to_utf8(argv[1]);
+#endif
     retro_set_environment(env_cb);
     retro_set_audio_sample_batch(audio_batch_cb);
     retro_set_video_refresh(video_refresh_cb);

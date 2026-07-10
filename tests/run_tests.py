@@ -122,6 +122,15 @@ def generate_fixtures(fixtures_dir: Path) -> None:
     write_png(fixtures_dir / "art_track.png", 256, 200, (30, 120, 220))
 
 
+def split_cflags(value: str) -> list[str]:
+    # posix-mode shlex.split treats backslashes as escapes, mangling Windows
+    # paths like -IC:\dev\extra; keep quote handling but disable escapes.
+    lexer = shlex.shlex(value, posix=True)
+    lexer.whitespace_split = True
+    lexer.escape = ""
+    return list(lexer)
+
+
 def build_harness(repo_root: Path, temp_dir: Path, compiler: str) -> Path:
     exe_name = "core_harness.exe" if in_msys() or os.name == "nt" else "core_harness"
     exe_path = temp_dir / exe_name
@@ -137,7 +146,7 @@ def build_harness(repo_root: Path, temp_dir: Path, compiler: str) -> Path:
         "src/config.c",
         "src/layout.c",
     ]
-    extra_cflags = shlex.split(os.environ.get("CFLAGS", ""))
+    extra_cflags = split_cflags(os.environ.get("CFLAGS", ""))
     command = [
         compiler,
         "-std=c99",
