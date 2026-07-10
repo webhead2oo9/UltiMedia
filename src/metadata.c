@@ -12,7 +12,6 @@ uint16_t *art_buffer = NULL;
 int art_w_src = 0, art_h_src = 0;
 char display_str[256];
 
-#define ART_MAX_DIMENSION 4096
 #define ART_STORED_MAX_DIMENSION 120
 
 typedef struct {
@@ -27,20 +26,22 @@ static int art_dimensions_valid(int width, int height) {
            width <= ART_MAX_DIMENSION && height <= ART_MAX_DIMENSION;
 }
 
+// Oversized images are rejected by stb_image itself: image_codecs.c builds
+// it with STBI_MAX_DIMENSIONS = ART_MAX_DIMENSION, so no pre-validation
+// pass is needed here.
 static unsigned char *load_art_file(const char *path, int *width, int *height) {
-    int components = 0;
     if (!path || !width || !height) return NULL;
-    if (!stbi_info(path, width, height, &components) || !art_dimensions_valid(*width, *height))
-        return NULL;
-    return stbi_load(path, width, height, NULL, 3);
+    // path_fopen_read tries the wide Windows path and falls back to the
+    // narrow one; stb_image's own path handling would lose that fallback.
+    FILE *file = path_fopen_read(path);
+    if (!file) return NULL;
+    unsigned char *data = stbi_load_from_file(file, width, height, NULL, 3);
+    fclose(file);
+    return data;
 }
 
 static unsigned char *load_art_memory(const unsigned char *data, size_t size, int *width, int *height) {
-    int components = 0;
     if (!data || size == 0 || size > INT32_MAX || !width || !height) return NULL;
-    if (!stbi_info_from_memory(data, (int)size, width, height, &components) ||
-        !art_dimensions_valid(*width, *height))
-        return NULL;
     return stbi_load_from_memory(data, (int)size, width, height, NULL, 3);
 }
 

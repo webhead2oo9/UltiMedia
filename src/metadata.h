@@ -3,6 +3,10 @@
 #include <stdint.h>
 #include "config.h"
 
+// Maximum decodable art dimension; image_codecs.c compiles stb_image's
+// STBI_MAX_DIMENSIONS from this same limit.
+#define ART_MAX_DIMENSION 4096
+
 // Album art buffer (RGB565)
 extern uint16_t *art_buffer;
 extern int art_w_src, art_h_src;
