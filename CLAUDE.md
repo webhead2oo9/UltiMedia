@@ -33,11 +33,12 @@ UltiMedia is a LibRetro audio player and music visualizer that runs as a core pl
 | `config.c` | LibRetro core options (declare + read) |
 | `layout.c` | Responsive UI layout computation |
 | `stb_vorbis_compat.h` | Shared Vorbis declarations used by `audio.c` and `metadata.c` |
-| `path_io.h` | UTF-8-aware file opening, including wide Windows paths |
+| `path_io.h` | UTF-8-aware file opening and path splitting, including wide Windows paths |
+| `core_state.h` | Serialized save-state layout, shared with the test harness |
 | `*.h` | Module interfaces; `core_debug.h` exposes state accessors for the test harness, `core_log.h` the shared diagnostic logger |
 
 **Tests & contributor tooling**
-- `tests/run_tests.py` — generates audio/artwork/playlist fixtures, compiles the native harness, runs it
+- `tests/run_tests.py` — generates audio/artwork/playlist fixtures, compiles the native harness, runs it; honors `CC=` (compiler) and `CFLAGS` (extra flags, e.g. `CFLAGS="-fsanitize=address,undefined"`) on every platform
 - `tests/core_harness.c` — native LibRetro harness for playback/state/navigation checks
 - `tests/SMOKE_CHECKLIST.md` — manual frontend verification checklist
 - `scripts/setup-windows.ps1` / `test-windows.ps1` / `build-windows.ps1` — Windows (MSYS2 UCRT64) wrappers; `windows-common.ps1` holds shared helpers
