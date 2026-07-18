@@ -43,8 +43,8 @@ bool audio_open_track(const char *path);
 // Returns number of samples written, 0 if end of track
 int audio_read_frame(int16_t *out_buf);
 
-// Seek to position in current track
-void audio_seek(uint64_t frame);
+// Seek to position in current track; leaves bookkeeping unchanged on failure
+bool audio_seek(uint64_t frame);
 
 // Close current decoder
 void audio_close(void);

@@ -39,6 +39,7 @@ UltiMedia is a LibRetro audio player and music visualizer that runs as a core pl
 
 **Tests & contributor tooling**
 - `tests/run_tests.py` — generates audio/artwork/playlist fixtures, compiles the native harness, runs it; honors `CC=` (compiler) and `CFLAGS` (extra flags, e.g. `CFLAGS="-fsanitize=address,undefined"`) on every platform
+- `tests/data/` — small FLAC/Vorbis seeds mutated by `run_tests.py` for decoder-length save-state regressions
 - `tests/core_harness.c` — native LibRetro harness for playback/state/navigation checks
 - `tests/SMOKE_CHECKLIST.md` — manual frontend verification checklist
 - `scripts/setup-windows.ps1` / `test-windows.ps1` / `build-windows.ps1` — Windows (MSYS2 UCRT64) wrappers; `windows-common.ps1` holds shared helpers

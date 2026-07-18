@@ -784,13 +784,18 @@ void retro_run(void) {
             if (seek_fwd) {
                 uint64_t next = cur_frame + seek_speed;
                 if (next < cur_frame) next = cur_frame; // overflow guard
-                if (total_frames > 0 && next >= total_frames) next = total_frames - 1;
-                audio_seek(next);
-                ff_rw_icon_timer = SEEK_ICON_FRAMES; ff_rw_dir = 1;
+                if (total_frames > 0 && cur_frame < total_frames && next >= total_frames)
+                    next = total_frames - 1;
+                if (audio_seek(next)) {
+                    ff_rw_icon_timer = SEEK_ICON_FRAMES;
+                    ff_rw_dir = 1;
+                }
             } else {
                 uint64_t next = (cur_frame < seek_speed) ? 0 : cur_frame - seek_speed;
-                audio_seek(next);
-                ff_rw_icon_timer = SEEK_ICON_FRAMES; ff_rw_dir = -1;
+                if (audio_seek(next)) {
+                    ff_rw_icon_timer = SEEK_ICON_FRAMES;
+                    ff_rw_dir = -1;
+                }
             }
         }
     }

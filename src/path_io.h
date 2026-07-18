@@ -59,7 +59,7 @@ static FILE *path_fopen_read(const char *path) {
 // Copy the directory portion of `path` (the bytes before the last '/' or
 // '\\') into `out`, truncating to fit. Returns 1 when a separator was
 // found, 0 otherwise (out is emptied).
-static int path_dirname(const char *path, char *out, size_t out_size) {
+static inline int path_dirname(const char *path, char *out, size_t out_size) {
     if (!out || out_size == 0) return 0;
     out[0] = '\0';
     if (!path) return 0;
@@ -77,7 +77,7 @@ static int path_dirname(const char *path, char *out, size_t out_size) {
 }
 
 // The component after the last '/' or '\\', or `path` itself.
-static const char *path_basename(const char *path) {
+static inline const char *path_basename(const char *path) {
     const char *slash = strrchr(path, '/');
     const char *bslash = strrchr(path, '\\');
     const char *base = slash;

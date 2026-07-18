@@ -14,6 +14,9 @@ import zlib
 from pathlib import Path
 
 
+RESTORE_DATA_DIR = Path(__file__).resolve().parent / "data"
+
+
 def fail(message: str) -> int:
     print(message, file=sys.stderr)
     return 1
@@ -85,6 +88,60 @@ def write_png(path: Path, width: int, height: int, rgb: tuple[int, int, int]) ->
     )
 
 
+def write_unknown_length_flac(path: Path) -> None:
+    data = bytearray((RESTORE_DATA_DIR / "restore_seed.flac").read_bytes())
+    if data[:4] != b"fLaC" or (data[4] & 0x7F) != 0 or int.from_bytes(data[5:8], "big") != 34:
+        raise RuntimeError("Unexpected FLAC restore seed layout.")
+
+    stream_info = int.from_bytes(data[18:26], "big")
+    if stream_info & ((1 << 36) - 1) == 0:
+        raise RuntimeError("FLAC restore seed already has an unknown length.")
+    stream_info &= ~((1 << 36) - 1)
+    data[18:26] = stream_info.to_bytes(8, "big")
+    path.write_bytes(data)
+
+
+def ogg_page_crc(page: bytes) -> int:
+    checksum = 0
+    for byte in page:
+        checksum ^= byte << 24
+        for _ in range(8):
+            polynomial = 0x04C11DB7 if checksum & 0x80000000 else 0
+            checksum = ((checksum << 1) ^ polynomial) & 0xFFFFFFFF
+    return checksum
+
+
+def write_underreported_ogg(path: Path) -> None:
+    data = bytearray((RESTORE_DATA_DIR / "restore_seed.ogg").read_bytes())
+    page_offset = 0
+    last_page = None
+
+    while page_offset < len(data):
+        if data[page_offset : page_offset + 4] != b"OggS" or page_offset + 27 > len(data):
+            raise RuntimeError("Unexpected OGG restore seed layout.")
+        segment_count = data[page_offset + 26]
+        segment_table_end = page_offset + 27 + segment_count
+        if segment_table_end > len(data):
+            raise RuntimeError("Truncated OGG restore seed segment table.")
+        page_size = 27 + segment_count + sum(data[page_offset + 27 : segment_table_end])
+        if page_offset + page_size > len(data):
+            raise RuntimeError("Truncated OGG restore seed page.")
+        last_page = (page_offset, page_size)
+        page_offset += page_size
+
+    if page_offset != len(data) or last_page is None:
+        raise RuntimeError("Invalid OGG restore seed page boundary.")
+
+    page_offset, page_size = last_page
+    if not data[page_offset + 5] & 0x04:
+        raise RuntimeError("OGG restore seed has no final end-of-stream page.")
+    data[page_offset + 6 : page_offset + 14] = (800).to_bytes(8, "little")
+    data[page_offset + 22 : page_offset + 26] = b"\0\0\0\0"
+    checksum = ogg_page_crc(data[page_offset : page_offset + page_size])
+    data[page_offset + 22 : page_offset + 26] = checksum.to_bytes(4, "little")
+    path.write_bytes(data)
+
+
 def generate_fixtures(fixtures_dir: Path) -> None:
     fixtures_dir.mkdir(parents=True, exist_ok=True)
 
@@ -120,15 +177,102 @@ def generate_fixtures(fixtures_dir: Path) -> None:
     write_wave(fixtures_dir / "seek_long.wav", 220.0, duration_seconds=8.0)
     write_wave(fixtures_dir / "unsupported_rate.wav", 440.0, duration_seconds=0.01, sample_rate=768_000)
     write_png(fixtures_dir / "art_track.png", 256, 200, (30, 120, 220))
+    write_unknown_length_flac(fixtures_dir / "unknown_length.flac")
+    write_underreported_ogg(fixtures_dir / "underreported.ogg")
+
+
+def protect_windows_path_backslashes(value: str) -> str:
+    """Escape path separators for shlex without disabling shell escapes."""
+    result: list[str] = []
+    index = 0
+    quote = None
+    in_windows_path = False
+
+    while index < len(value):
+        char = value[index]
+        if quote is not None:
+            result.append(char)
+            if char == quote:
+                quote = None
+            elif char == "\\" and quote == '"' and index + 1 < len(value):
+                result.append(value[index + 1])
+                index += 1
+            index += 1
+            continue
+
+        if char in "'\"":
+            quote = char
+            result.append(char)
+            index += 1
+            continue
+        if char.isspace():
+            in_windows_path = False
+            result.append(char)
+            index += 1
+            continue
+
+        if (
+            not in_windows_path
+            and char.isalpha()
+            and index + 2 < len(value)
+            and value[index + 1] == ":"
+            and value[index + 2] == "\\"
+        ):
+            in_windows_path = True
+        elif (
+            not in_windows_path
+            and char == "\\"
+            and index + 1 < len(value)
+            and value[index + 1] == "\\"
+        ):
+            in_windows_path = True
+
+        if in_windows_path and char == "\\":
+            if index + 1 < len(value) and value[index + 1].isspace():
+                result.extend((char, value[index + 1]))
+                index += 2
+                continue
+            result.extend(("\\", "\\"))
+            index += 1
+            continue
+
+        result.append(char)
+        index += 1
+
+    return "".join(result)
 
 
 def split_cflags(value: str) -> list[str]:
-    # posix-mode shlex.split treats backslashes as escapes, mangling Windows
-    # paths like -IC:\dev\extra; keep quote handling but disable escapes.
-    lexer = shlex.shlex(value, posix=True)
-    lexer.whitespace_split = True
-    lexer.escape = ""
-    return list(lexer)
+    protected = protect_windows_path_backslashes(value)
+    return shlex.split(protected, comments=False, posix=True)
+
+
+def check_cflags_parser() -> None:
+    backslash = "\\"
+    cases = [
+        (
+            f"-IC:{backslash}dev{backslash}extra",
+            [f"-IC:{backslash}dev{backslash}extra"],
+        ),
+        (
+            f'-DVALUE={backslash}"hello{backslash}"',
+            ['-DVALUE="hello"'],
+        ),
+        (
+            f"-I/tmp/my{backslash} headers",
+            ["-I/tmp/my headers"],
+        ),
+        (
+            "-DHEX=#abc -Wall",
+            ["-DHEX=#abc", "-Wall"],
+        ),
+    ]
+    for value, expected in cases:
+        actual = split_cflags(value)
+        if actual != expected:
+            raise RuntimeError(
+                f"CFLAGS parser produced {actual!r}; expected {expected!r} for {value!r}."
+            )
 
 
 def build_harness(repo_root: Path, temp_dir: Path, compiler: str) -> Path:
@@ -177,6 +321,7 @@ def main() -> int:
 
     try:
         ensure_supported_windows_path()
+        check_cflags_parser()
     except RuntimeError as exc:
         return fail(str(exc))
 

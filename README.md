@@ -129,7 +129,7 @@ Run the native test harness locally with:
 python3 tests/run_tests.py
 ```
 
-This command generates temporary audio, artwork, and playlist fixtures at runtime, compiles a native harness, and exercises playback, UTF-8/UTF-16 playlist navigation, seeking, bad-track handling, artwork scaling, shuffle, reset, and save-state behavior.
+This command generates temporary audio, artwork, and playlist fixtures at runtime (using the small FLAC/Vorbis seeds in `tests/data/` for decoder-length edge cases), compiles a native harness, and exercises playback, UTF-8/UTF-16 playlist navigation, seeking, bad-track handling, artwork scaling, shuffle, reset, and save-state behavior.
 
 Set `CFLAGS` to add compiler instrumentation or diagnostics to the harness build, for example `CFLAGS="-fsanitize=address,undefined"` on a supported compiler.
 

@@ -64,7 +64,7 @@ curl -sL -o deps/stb_vorbis.c https://raw.githubusercontent.com/nothings/stb/mas
 python3 tests/run_tests.py
 ```
 
-`run_tests.py` generates temporary audio, artwork, and playlist fixtures, compiles the native test harness, and exercises playback, Unicode navigation, seeking, failure handling, shuffle, reset, and save-state behavior. It uses `cc` by default; override with `CC=/path/to/compiler` or add instrumentation through `CFLAGS`.
+`run_tests.py` generates temporary audio, artwork, and playlist fixtures (using the small FLAC/Vorbis seeds in `tests/data/` for decoder-length edge cases), compiles the native test harness, and exercises playback, Unicode navigation, seeking, failure handling, shuffle, reset, and save-state behavior. It uses `cc` by default; override with `CC=/path/to/compiler` or add instrumentation through `CFLAGS`.
 
 > The distributable artifact is a Windows DLL, so the build command below targets MSYS2. On macOS/Linux the test harness is the primary local validation path — it compiles and links every `src/` module, so a clean run means the code at least builds across the codebase.
 

@@ -10,6 +10,7 @@
 #include "path_io.h"
 
 #define AUDIO_STATE_SNAPSHOT_VERSION 1u
+#define SOURCE_BUFFER_FRAMES (SAMPLES_PER_FRAME * 8)
 
 // Global audio state
 AudioType current_type = AUDIO_NONE;
@@ -21,7 +22,7 @@ uint64_t cur_frame = 0;
 
 // Resample state
 static double resample_phase = 0.0;
-static int16_t resample_in_buf[SAMPLES_PER_FRAME * 8 * MAX_CHANNELS];
+static int16_t resample_in_buf[SOURCE_BUFFER_FRAMES * MAX_CHANNELS];
 static int16_t resample_cache[RESAMPLE_CACHE_FRAMES * MAX_CHANNELS];
 static int resample_cache_frames = 0;
 
@@ -33,19 +34,26 @@ static bool audio_snapshot_fields_valid(const AudioStateSnapshot *state) {
         return false;
     if (!isfinite(state->resample_phase) || state->resample_phase < 0.0 || state->resample_phase >= 1.0)
         return false;
-    // total_frames == 0 means the decoder reported an unknown length (FLAC
-    // without a STREAMINFO total, OGG length-probe failure), so a positive
-    // position is legitimate there.
-    if (state->total_frames > 0 && state->cur_frame > state->total_frames) return false;
+    if ((uint64_t)state->resample_cache_frames > UINT64_MAX - state->cur_frame)
+        return false;
+    uint64_t decoder_frame = state->cur_frame + (uint64_t)state->resample_cache_frames;
 
-    if ((AudioType)state->current_type == AUDIO_NONE) {
+    AudioType state_type = (AudioType)state->current_type;
+    if (state_type == AUDIO_NONE) {
         return state->source_rate == 0 &&
                state->total_frames == 0 &&
                state->cur_frame == 0 &&
                state->resample_cache_frames == 0;
     }
+    if (state->source_rate == 0 || state->source_rate > (uint32_t)(OUT_RATE * 8))
+        return false;
+    // Only FLAC and Vorbis can keep decoding past absent or under-reported
+    // length metadata. Such a position is malformed for WAV/MP3 snapshots.
+    if (decoder_frame > state->total_frames &&
+        state_type != AUDIO_FLAC && state_type != AUDIO_OGG)
+        return false;
 
-    return state->source_rate > 0;
+    return true;
 }
 
 static bool audio_init_mp3_path(drmp3 *mp3, const char *path) {
@@ -281,6 +289,65 @@ bool audio_open_track(const char *path) {
     return true;
 }
 
+static uint64_t audio_read_source_frames(int16_t *buffer, uint32_t frame_count) {
+    if (!decoder || !buffer || frame_count == 0) return 0;
+
+    if (current_type == AUDIO_MP3)
+        return drmp3_read_pcm_frames_s16((drmp3*)decoder, frame_count, buffer);
+    if (current_type == AUDIO_WAV)
+        return drwav_read_pcm_frames_s16((drwav*)decoder, frame_count, buffer);
+    if (current_type == AUDIO_OGG) {
+        int frames = stb_vorbis_get_samples_short_interleaved(
+            (stb_vorbis*)decoder, source_channels, buffer,
+            (int)(frame_count * (uint32_t)source_channels));
+        return (frames > 0) ? (uint64_t)frames : 0;
+    }
+    if (current_type == AUDIO_FLAC)
+        return drflac_read_pcm_frames_s16((drflac*)decoder, frame_count, buffer);
+    return 0;
+}
+
+static bool audio_seek_decoder(uint64_t frame) {
+    if (!decoder) return false;
+    if (total_frames == 0 && frame > 0) return false;
+    if (total_frames > 0 && frame > total_frames) return false;
+
+    if (current_type == AUDIO_MP3)
+        return drmp3_seek_to_pcm_frame((drmp3*)decoder, frame) != 0;
+    if (current_type == AUDIO_WAV)
+        return drwav_seek_to_pcm_frame((drwav*)decoder, frame) != 0;
+    if (current_type == AUDIO_OGG) {
+        if (frame == 0) return stb_vorbis_seek_start((stb_vorbis*)decoder) != 0;
+        if (frame > UINT32_MAX) return false;
+        return stb_vorbis_seek((stb_vorbis*)decoder, (unsigned int)frame) != 0;
+    }
+    if (current_type == AUDIO_FLAC)
+        return drflac_seek_to_pcm_frame((drflac*)decoder, frame) != 0;
+    return false;
+}
+
+static bool audio_discard_source_frames(uint64_t frame_count) {
+    while (frame_count > 0) {
+        uint32_t request = (frame_count > SOURCE_BUFFER_FRAMES)
+            ? SOURCE_BUFFER_FRAMES
+            : (uint32_t)frame_count;
+        uint64_t read = audio_read_source_frames(resample_in_buf, request);
+        if (read != request) return false;
+        frame_count -= read;
+    }
+    return true;
+}
+
+static bool audio_position_decoder(uint64_t frame) {
+    if (frame == 0) return true;
+    // Unknown and under-reported lengths cannot use decoder seek tables
+    // reliably. Replaying source PCM from the freshly opened decoder is
+    // slower, but preserves an exact save-state position.
+    if (total_frames == 0 || frame > total_frames)
+        return audio_discard_source_frames(frame);
+    return audio_seek_decoder(frame);
+}
+
 void audio_capture_state(AudioStateSnapshot *state) {
     if (!state) return;
 
@@ -311,26 +378,17 @@ bool audio_restore_state(const char *path, const AudioStateSnapshot *state) {
         return true;
     }
 
+    uint64_t resume_frame = state->cur_frame + (uint64_t)state->resample_cache_frames;
     if (!path || !audio_open_track(path)) return false;
-    uint64_t resume_frame = state->cur_frame;
-    if ((uint64_t)state->resample_cache_frames > UINT64_MAX - resume_frame) {
-        audio_close();
-        return false;
-    }
-    resume_frame += (uint64_t)state->resample_cache_frames;
-    // No positional bound check here: cur_frame <= total_frames is already
-    // enforced by audio_snapshot_valid for known lengths, and resume_frame
-    // may legitimately overshoot total_frames by up to the cache size when
-    // playback ran past an under-reported track length (e.g. VBR MP3).
     if (current_type != (AudioType)state->current_type ||
         source_rate != state->source_rate ||
         source_channels != state->source_channels ||
-        total_frames != state->total_frames) {
+        total_frames != state->total_frames ||
+        !audio_position_decoder(resume_frame)) {
         audio_close();
         return false;
     }
 
-    audio_seek(resume_frame);
     cur_frame = state->cur_frame;
     resample_phase = state->resample_phase;
     resample_cache_frames = state->resample_cache_frames;
@@ -339,15 +397,14 @@ bool audio_restore_state(const char *path, const AudioStateSnapshot *state) {
     return true;
 }
 
-void audio_seek(uint64_t frame) {
+bool audio_seek(uint64_t frame) {
+    if (!audio_seek_decoder(frame)) return false;
+
     cur_frame = frame;
     resample_phase = 0.0;
     resample_cache_frames = 0;
     memset(resample_cache, 0, sizeof(resample_cache));
-    if (current_type == AUDIO_MP3) drmp3_seek_to_pcm_frame((drmp3*)decoder, cur_frame);
-    else if (current_type == AUDIO_WAV) drwav_seek_to_pcm_frame((drwav*)decoder, cur_frame);
-    else if (current_type == AUDIO_OGG) stb_vorbis_seek((stb_vorbis*)decoder, cur_frame);
-    else if (current_type == AUDIO_FLAC) drflac_seek_to_pcm_frame((drflac*)decoder, cur_frame);
+    return true;
 }
 
 int audio_read_frame(int16_t *out_buf) {
@@ -363,26 +420,16 @@ int audio_read_frame(int16_t *out_buf) {
     uint32_t required_frames = i2_max + 1;
     uint32_t frames_to_read = required_frames;
     if (frames_to_read < advance_frames) frames_to_read = advance_frames;
-    if (frames_to_read > SAMPLES_PER_FRAME * 8) frames_to_read = SAMPLES_PER_FRAME * 8;
+    if (frames_to_read > SOURCE_BUFFER_FRAMES) frames_to_read = SOURCE_BUFFER_FRAMES;
 
-    uint64_t read = 0;
     int channels = source_channels;
-
     uint32_t cache_frames = (resample_cache_frames > (int)frames_to_read) ? frames_to_read : (uint32_t)resample_cache_frames;
     if (cache_frames > 0) {
         memcpy(resample_in_buf, resample_cache, cache_frames * (uint32_t)channels * sizeof(int16_t));
     }
     uint32_t need_read = (frames_to_read > cache_frames) ? (frames_to_read - cache_frames) : 0;
-
-    if (current_type == AUDIO_MP3) {
-        read = drmp3_read_pcm_frames_s16((drmp3*)decoder, need_read, resample_in_buf + cache_frames * channels);
-    } else if (current_type == AUDIO_WAV) {
-        read = drwav_read_pcm_frames_s16((drwav*)decoder, need_read, resample_in_buf + cache_frames * channels);
-    } else if (current_type == AUDIO_OGG) {
-        read = stb_vorbis_get_samples_short_interleaved((stb_vorbis*)decoder, channels, resample_in_buf + cache_frames * channels, need_read * channels);
-    } else if (current_type == AUDIO_FLAC) {
-        read = drflac_read_pcm_frames_s16((drflac*)decoder, need_read, resample_in_buf + cache_frames * channels);
-    }
+    uint64_t read = audio_read_source_frames(
+        resample_in_buf + cache_frames * (uint32_t)channels, need_read);
 
     uint32_t total_available = cache_frames + (uint32_t)read;
     if (total_available < 2 || (read < need_read && cur_frame > 1000)) {
@@ -413,10 +460,11 @@ int audio_read_frame(int16_t *out_buf) {
     }
 
     resample_phase = new_phase;
-    cur_frame += (uint64_t)advance_frames;
-    if (total_frames > 0 && cur_frame > total_frames) cur_frame = total_frames;
+    uint32_t consumed_frames = (advance_frames < total_available) ? advance_frames : total_available;
+    if ((uint64_t)consumed_frames > UINT64_MAX - cur_frame) return 0;
+    cur_frame += (uint64_t)consumed_frames;
 
-    int overshoot = (int)total_available - (int)advance_frames;
+    int overshoot = (int)total_available - (int)consumed_frames;
     if (overshoot < 0) overshoot = 0;
     if (overshoot > RESAMPLE_CACHE_FRAMES) overshoot = RESAMPLE_CACHE_FRAMES;
     resample_cache_frames = overshoot;
