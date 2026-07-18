@@ -5,6 +5,10 @@
 #define FB_WIDTH 320
 #define FB_HEIGHT 240
 
+// Glyph cell width of the 8x8 font used by draw_text/draw_text_clipped;
+// text measurement everywhere derives from this.
+#define GLYPH_WIDTH 8
+
 // Framebuffer pointer (allocated by core)
 extern uint16_t *framebuffer;
 

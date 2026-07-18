@@ -17,13 +17,14 @@
 #include "metadata.h"
 #include "visualizer.h"
 #include "core_log.h"
+#include "core_state.h"
 #include "path_io.h"
 
-#define CORE_MAX_TRACKS 256
 #define CORE_MAX_PATH 1024
 #define CORE_STATE_MAGIC 0x554D5354u
 #define CORE_STATE_VERSION 2u
 #define CORE_DEFAULT_SEED 0xA341316Cu
+#define SEEK_ICON_FRAMES 15 // How long the >>/<< icon stays up after a seek
 
 // LibRetro callbacks
 static retro_environment_t environ_cb;
@@ -89,33 +90,6 @@ static const struct retro_input_descriptor input_descriptors[] = {
     {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y, "Toggle Shuffle"},
     {0},
 };
-
-typedef struct {
-    uint32_t magic;
-    uint32_t version;
-    uint32_t content_hash;
-    uint32_t track_count;
-    int32_t current_idx;
-    int32_t viz_mode;
-    int32_t scroll_x;
-    int32_t legacy_debounce; // unused since edge-triggered input; keeps layout stable
-    int32_t ff_rw_icon_timer;
-    int32_t ff_rw_dir;
-    uint8_t is_paused;
-    uint8_t is_shuffle;
-    uint8_t reserved[2];
-    uint32_t shuffle_seed;
-    uint32_t shuffle_state;
-    uint32_t shuffle_count;
-    uint32_t shuffle_pos;
-    uint32_t shuffle_history_count;
-    uint32_t shuffle_history_pos;
-    AudioStateSnapshot audio;
-    int32_t shuffle_order[CORE_MAX_TRACKS];
-    int32_t shuffle_history[CORE_MAX_TRACKS];
-    uint32_t m3u_base_path_len;
-    uint32_t track_path_lens[CORE_MAX_TRACKS];
-} CoreStateSnapshot;
 
 // Forward declarations
 static bool open_track(int idx);
@@ -664,6 +638,19 @@ static void reset_runtime_state(bool preserve_shuffle_mode) {
     viz_reset_state();
 }
 
+// Tear down the whole playback session: decoder, artwork, playlist, and
+// runtime state. Shared by retro_unload_game and every retro_load_game
+// bail-out so no path can leave stale session state (e.g. shuffle order)
+// behind.
+static void unload_session(void) {
+    audio_close();
+    metadata_free_art();
+    free_tracks();
+    current_idx = 0;
+    m3u_base_path[0] = '\0';
+    reset_runtime_state(false);
+}
+
 static int add_serialized_size(size_t *total, size_t add) {
     if (!total || add > SIZE_MAX - *total) return 0;
     *total += add;
@@ -797,13 +784,18 @@ void retro_run(void) {
             if (seek_fwd) {
                 uint64_t next = cur_frame + seek_speed;
                 if (next < cur_frame) next = cur_frame; // overflow guard
-                if (total_frames > 0 && next >= total_frames) next = total_frames - 1;
-                audio_seek(next);
-                ff_rw_icon_timer = 15; ff_rw_dir = 1;
+                if (total_frames > 0 && cur_frame < total_frames && next >= total_frames)
+                    next = total_frames - 1;
+                if (audio_seek(next)) {
+                    ff_rw_icon_timer = SEEK_ICON_FRAMES;
+                    ff_rw_dir = 1;
+                }
             } else {
                 uint64_t next = (cur_frame < seek_speed) ? 0 : cur_frame - seek_speed;
-                audio_seek(next);
-                ff_rw_icon_timer = 15; ff_rw_dir = -1;
+                if (audio_seek(next)) {
+                    ff_rw_icon_timer = SEEK_ICON_FRAMES;
+                    ff_rw_dir = -1;
+                }
             }
         }
     }
@@ -859,7 +851,7 @@ void retro_run(void) {
 
         if (cfg.show_txt && layout.text.w > 0) {
             int right_edge = layout.text.x + layout.text.w;
-            int text_w = (int)strlen(display_str) * 8;
+            int text_w = (int)strlen(display_str) * GLYPH_WIDTH;
             int left_bound = layout.text.x - text_w;
             if (scroll_x > right_edge || scroll_x < left_bound)
                 scroll_x = right_edge;
@@ -880,7 +872,7 @@ void retro_run(void) {
         if (cfg.show_tim && layout.time.w > 0) {
             int sec = source_rate ? (int)(cur_frame / source_rate) : 0;
             snprintf(time_str, sizeof(time_str), "%02d:%02d", sec / 60, sec % 60);
-            int time_x = layout.time.x + (layout.time.w - ((int)strlen(time_str) * 8)) / 2;
+            int time_x = layout.time.x + (layout.time.w - ((int)strlen(time_str) * GLYPH_WIDTH)) / 2;
             draw_text(time_x, layout.time.y, time_str, cfg.fg_rgb);
         }
 
@@ -915,7 +907,7 @@ void retro_run(void) {
         if (cfg.show_txt) {
             draw_text(scroll_x, cfg.txt_y, display_str, cfg.fg_rgb);
             scroll_x--;
-            if (scroll_x < -((int)strlen(display_str) * 8)) scroll_x = FB_WIDTH;
+            if (scroll_x < -((int)strlen(display_str) * GLYPH_WIDTH)) scroll_x = FB_WIDTH;
         }
         if (cfg.show_viz) {
             viz_draw();
@@ -954,12 +946,7 @@ void retro_set_environment(retro_environment_t cb) {
 bool retro_load_game(const struct retro_game_info *g) {
     if (!g || !g->path) return false;
 
-    audio_close();
-    metadata_free_art();
-    free_tracks();
-    current_idx = 0;
-    m3u_base_path[0] = '\0';
-    reset_runtime_state(false);
+    unload_session();
     char m3u_dir[CORE_MAX_PATH] = {0};
 
     // Check for M3U extension
@@ -977,14 +964,7 @@ bool retro_load_game(const struct retro_game_info *g) {
         detect_m3u_encoding(f, &m3u_utf16_le, &m3u_utf16_be);
         strncpy(m3u_base_path, g->path, CORE_MAX_PATH - 1);
         m3u_base_path[sizeof(m3u_base_path) - 1] = '\0';
-        const char* last = strrchr(g->path, '/');
-        if (!last) last = strrchr(g->path, '\\');
-        if (last) {
-            size_t dir_len = (size_t)(last - g->path);
-            if (dir_len >= sizeof(m3u_dir)) dir_len = sizeof(m3u_dir) - 1;
-            memcpy(m3u_dir, g->path, dir_len);
-            m3u_dir[dir_len] = '\0';
-        } else {
+        if (!path_dirname(g->path, m3u_dir, sizeof(m3u_dir))) {
             strncpy(m3u_dir, ".", sizeof(m3u_dir) - 1);
             m3u_dir[sizeof(m3u_dir) - 1] = '\0';
         }
@@ -1045,8 +1025,7 @@ bool retro_load_game(const struct retro_game_info *g) {
             tracks[track_count] = core_strdup(resolved);
             if (!tracks[track_count]) {
                 fclose(f);
-                free_tracks();
-                m3u_base_path[0] = '\0';
+                unload_session();
                 return false;
             }
             track_count++;
@@ -1060,7 +1039,7 @@ bool retro_load_game(const struct retro_game_info *g) {
     }
 
     if (track_count == 0) {
-        m3u_base_path[0] = '\0';
+        unload_session();
         return false;
     }
 
@@ -1080,11 +1059,7 @@ bool retro_load_game(const struct retro_game_info *g) {
         }
     }
     if (!opened) {
-        audio_close();
-        metadata_free_art();
-        free_tracks();
-        current_idx = 0;
-        m3u_base_path[0] = '\0';
+        unload_session();
         return false;
     }
     return true;
@@ -1111,8 +1086,10 @@ void retro_set_input_poll(retro_input_poll_t cb) { input_poll_cb = cb; }
 void retro_set_input_state(retro_input_state_t cb) { input_state_cb = cb; }
 unsigned retro_api_version(void) { return RETRO_API_VERSION; }
 void retro_get_system_info(struct retro_system_info *i) {
-    i->library_name = "Music Playlist Core";
-    i->library_version = "1.0";
+    // Frontends key per-core settings, remaps, and save-state folders off
+    // this identity -- renaming it orphans existing users' data.
+    i->library_name = "UltiMedia UGC";
+    i->library_version = "17.0";
     i->valid_extensions = "mp3|wav|m3u|ogg|flac";
     i->need_fullpath = true;
 }
@@ -1127,12 +1104,7 @@ void retro_get_system_av_info(struct retro_system_av_info *info) {
 }
 void retro_set_audio_sample(retro_audio_sample_t cb) { (void)cb; }
 void retro_unload_game(void) {
-    audio_close();
-    metadata_free_art();
-    free_tracks();
-    current_idx = 0;
-    m3u_base_path[0] = '\0';
-    reset_runtime_state(false);
+    unload_session();
 }
 void retro_reset(void) {
     if (track_count == 0 || current_idx < 0 || current_idx >= track_count || !tracks[current_idx]) {
@@ -1234,12 +1206,21 @@ bool retro_unserialize(const void *d, size_t s) {
             return false;
     }
 
+    // Reject invalid audio snapshots before touching the live decoder:
+    // audio_restore_state would fail on pure validation, and tearing
+    // playback down for a state that was never going to load would silence
+    // a healthy session.
+    if (!audio_snapshot_valid(&state->audio)) return false;
+
     AudioStateSnapshot previous_audio;
     const char *previous_track = NULL;
     bool had_current_track = current_idx >= 0 && current_idx < track_count && tracks[current_idx];
     if (had_current_track) previous_track = tracks[current_idx];
     audio_capture_state(&previous_audio);
 
+    // The incoming snapshot validated above, so a restore failure here
+    // means the live decoder really was disturbed; roll back, and close
+    // only if the rollback fails too.
     if (!audio_restore_state(tracks[state->current_idx], &state->audio)) {
         if (!audio_restore_state(previous_track, &previous_audio))
             audio_close();
@@ -1259,12 +1240,12 @@ bool retro_unserialize(const void *d, size_t s) {
     metadata_load(tracks[current_idx], m3u_base_path, cfg.track_text_mode);
     is_paused = state->is_paused != 0;
     is_shuffle = state->is_shuffle != 0;
-    int min_scroll_x = -((int)strlen(display_str) * 8);
+    int min_scroll_x = -((int)strlen(display_str) * GLYPH_WIDTH);
     scroll_x = state->scroll_x;
     if (scroll_x < min_scroll_x || scroll_x > FB_WIDTH) scroll_x = FB_WIDTH;
     ff_rw_icon_timer = state->ff_rw_icon_timer;
     if (ff_rw_icon_timer < 0) ff_rw_icon_timer = 0;
-    if (ff_rw_icon_timer > 15) ff_rw_icon_timer = 15;
+    if (ff_rw_icon_timer > SEEK_ICON_FRAMES) ff_rw_icon_timer = SEEK_ICON_FRAMES;
     ff_rw_dir = (state->ff_rw_dir > 0) ? 1 : ((state->ff_rw_dir < 0) ? -1 : 0);
     shuffle_seed = sanitize_seed(state->shuffle_seed ? state->shuffle_seed : current_content_hash());
     shuffle_state = sanitize_seed(state->shuffle_state ? state->shuffle_state : shuffle_seed);

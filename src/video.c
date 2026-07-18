@@ -45,7 +45,7 @@ void draw_text(int x, int y, const char* txt, uint16_t color) {
                 }
             }
         }
-        x += 8;
+        x += GLYPH_WIDTH;
     }
 }
 
@@ -56,7 +56,7 @@ void draw_text_clipped(int x, int y, const char* txt, uint16_t color, int clip_x
     while (*txt) {
         uint8_t c = (*txt++) - 32;
         int char_left = x;
-        int char_right = x + 8;
+        int char_right = x + GLYPH_WIDTH;
 
         if (char_right > clip_x && char_left < clip_right && c < 96) {
             for (int gy = 0; gy < 8; gy++) {
@@ -69,6 +69,6 @@ void draw_text_clipped(int x, int y, const char* txt, uint16_t color, int clip_x
             }
         }
 
-        x += 8;
+        x += GLYPH_WIDTH;
     }
 }

@@ -1,12 +1,12 @@
 ## All data is optional, but helps improve user experience.
 
 # Software Information
-display_name = "Music Playlist Core"
+display_name = "UltiMedia UGC"
 authors = "KrisRetro, webhead"
 corename = "music_playlist"
 supported_extensions = "m3u|mp3|ogg|flac|wav"
 license = "MIT"
-display_version = "1.0"
+display_version = "17.0"
 
 # Hardware Information (not relevant here)
 manufacturer = "Generic"

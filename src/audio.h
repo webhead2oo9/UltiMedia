@@ -43,14 +43,17 @@ bool audio_open_track(const char *path);
 // Returns number of samples written, 0 if end of track
 int audio_read_frame(int16_t *out_buf);
 
-// Seek to position in current track
-void audio_seek(uint64_t frame);
+// Seek to position in current track; leaves bookkeeping unchanged on failure
+bool audio_seek(uint64_t frame);
 
 // Close current decoder
 void audio_close(void);
 
 // Capture the current decode/resampler state
 void audio_capture_state(AudioStateSnapshot *state);
+
+// Validate a snapshot's version and fields without touching the decoder
+bool audio_snapshot_valid(const AudioStateSnapshot *state);
 
 // Reopen a track and restore decode/resampler state
 bool audio_restore_state(const char *path, const AudioStateSnapshot *state);

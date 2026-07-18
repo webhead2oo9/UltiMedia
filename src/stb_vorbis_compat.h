@@ -35,5 +35,6 @@ extern void stb_vorbis_close(stb_vorbis *f);
 extern stb_vorbis *stb_vorbis_open_filename(const char *filename, int *error, const stb_vorbis_alloc *alloc_buffer);
 extern stb_vorbis *stb_vorbis_open_file(FILE *file, int close_handle_on_close, int *error, const stb_vorbis_alloc *alloc_buffer);
 extern int stb_vorbis_seek(stb_vorbis *f, unsigned int sample_number);
+extern int stb_vorbis_seek_start(stb_vorbis *f);
 extern unsigned int stb_vorbis_stream_length_in_samples(stb_vorbis *f);
 extern int stb_vorbis_get_samples_short_interleaved(stb_vorbis *f, int channels, short *buffer, int num_shorts);
