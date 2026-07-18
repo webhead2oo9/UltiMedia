@@ -11,7 +11,9 @@ float viz_levels[MAX_VIZ_BANDS] = {0};
 float viz_peaks[MAX_VIZ_BANDS] = {0};
 int viz_peak_timers[MAX_VIZ_BANDS] = {0};
 
-#define FFT_SIZE 1024
+// 2048 points at 48kHz gives ~23Hz bins so the low log-spaced bands stop
+// sharing bins; the analysis window grows to ~43ms, fine for a visualizer.
+#define FFT_SIZE 2048
 #define TWO_PI_F 6.28318530717958647692f
 #define FFT_MIN_FREQ 35.0f
 #define FFT_MAX_FREQ_RATIO 0.92f
@@ -173,7 +175,7 @@ static void fft_update_levels(const int16_t *audio_buf, int samples_per_frame, i
         return;
     }
 
-    float mono_samples[FFT_SIZE];
+    static float mono_samples[FFT_SIZE];  // 8KB; keep off the frontend's stack
     float dc_sum = 0.0f;
     int ring_idx = fft_ring_pos;
     for (int i = 0; i < FFT_SIZE; i++) {

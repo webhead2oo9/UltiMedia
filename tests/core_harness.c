@@ -1132,6 +1132,8 @@ static bool test_track_change_resets_fft_visualizer_state(TestContext *ctx) {
         loud_buf[i * 2 + 1] = 12000;
     }
 
+    // Two updates fill the 2048-sample FFT analysis ring.
+    viz_update_levels(loud_buf, 1024);
     viz_update_levels(loud_buf, 1024);
     for (int i = 0; i < cfg.viz_bands; i++) {
         if (viz_levels[i] > 0.0f || viz_peaks[i] > 0.0f || viz_peak_timers[i] > 0) {
