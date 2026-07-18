@@ -343,14 +343,20 @@ static void draw_bars_mode(int band_count) {
     if (draw_bar_width > layout.viz_inner.w) draw_bar_width = layout.viz_inner.w;
     if (draw_bar_width < 1) draw_bar_width = 1;
 
+    uint16_t unlit_color = mix565(cfg.bg_rgb, cfg.fg_rgb, 28);
+
     for (int i = 0; i < band_count; i++) {
         int h = (int)(viz_levels[i] * max_h);
         if (h > max_h) h = max_h;
         int x_base = viz_band_x(i, band_count, draw_bar_width);
 
-        // Draw main bar
-        for (int v = 0; v < h; v++) {
-            uint16_t color = cfg.viz_gradient ? get_gradient_color((float)v / (float)max_h) : cfg.fg_rgb;
+        // LED ladder: 2px lit segments with 1px gaps; segments above the
+        // level stay faintly visible so the ladder reads as hardware.
+        for (int v = 0; v < max_h; v++) {
+            if ((v % 3) == 2) continue;
+            uint16_t color;
+            if (v < h) color = cfg.viz_gradient ? get_gradient_color((float)v / (float)max_h) : cfg.fg_rgb;
+            else color = unlit_color;
             for (int w = 0; w < draw_bar_width; w++) draw_pixel(x_base + w, base_y - v, color);
         }
 
