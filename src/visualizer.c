@@ -11,6 +11,10 @@ float viz_levels[MAX_VIZ_BANDS] = {0};
 float viz_peaks[MAX_VIZ_BANDS] = {0};
 int viz_peak_timers[MAX_VIZ_BANDS] = {0};
 
+// Dots-mode phosphor trail: previous dot heights, most recent first.
+static int dot_trail[MAX_VIZ_BANDS][2] = {{0}};
+static int dot_trail_tick = 0;
+
 // 2048 points at 48kHz gives ~23Hz bins so the low log-spaced bands stop
 // sharing bins; the analysis window grows to ~43ms, fine for a visualizer.
 #define FFT_SIZE 2048
@@ -375,10 +379,21 @@ static void draw_bars_mode(int band_count) {
     }
 }
 
+static void draw_dot(int x, int y, uint16_t color) {
+    draw_pixel(x, y, color);
+    draw_pixel(x + 1, y, color);
+    draw_pixel(x, y - 1, color);
+    draw_pixel(x + 1, y - 1, color);
+}
+
 static void draw_dots_mode(int band_count) {
     int max_h = layout.viz_max_h;
     int base_y = layout.viz_inner.y + layout.viz_inner.h - 1;
     if (max_h < 1) max_h = 1;
+
+    // Record ghost positions every other frame so the trail visibly lags.
+    dot_trail_tick ^= 1;
+    int record = (dot_trail_tick == 0);
 
     for (int i = 0; i < band_count; i++) {
         int h = (int)(viz_levels[i] * max_h);
@@ -386,11 +401,20 @@ static void draw_dots_mode(int band_count) {
         int x = viz_band_x(i, band_count, 2);
         uint16_t color = cfg.viz_gradient ? get_gradient_color(viz_levels[i]) : cfg.fg_rgb;
 
-        // Draw 2x2 dot
-        draw_pixel(x, base_y - h, color);
-        draw_pixel(x + 1, base_y - h, color);
-        draw_pixel(x, base_y - h - 1, color);
-        draw_pixel(x + 1, base_y - h - 1, color);
+        // Phosphor trail: older ghost first, both dimmed toward the bg.
+        for (int g = 1; g >= 0; g--) {
+            int gh = dot_trail[i][g];
+            uint16_t gcolor = cfg.viz_gradient ? get_gradient_color((float)gh / (float)max_h) : cfg.fg_rgb;
+            gcolor = mix565(gcolor, cfg.bg_rgb, (g == 0) ? 140 : 195);
+            draw_dot(x, base_y - gh, gcolor);
+        }
+
+        if (record) {
+            dot_trail[i][1] = dot_trail[i][0];
+            dot_trail[i][0] = h;
+        }
+
+        draw_dot(x, base_y - h, color);
 
         // Peak dot
         if (cfg.viz_peak_hold > 0 && viz_peak_timers[i] > 0) {
@@ -511,6 +535,8 @@ void viz_reset_state(void) {
     memset(viz_levels, 0, sizeof(viz_levels));
     memset(viz_peaks, 0, sizeof(viz_peaks));
     memset(viz_peak_timers, 0, sizeof(viz_peak_timers));
+    memset(dot_trail, 0, sizeof(dot_trail));
+    dot_trail_tick = 0;
     memset(fft_re, 0, sizeof(fft_re));
     memset(fft_im, 0, sizeof(fft_im));
     memset(fft_band_energy, 0, sizeof(fft_band_energy));
