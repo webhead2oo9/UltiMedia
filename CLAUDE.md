@@ -26,12 +26,13 @@ UltiMedia is a LibRetro audio player and music visualizer that runs as a core pl
 | `core.c` | LibRetro callbacks, playlist loading, runtime state, shuffle flow, save/load state |
 | `audio.c` | Audio decoding, resampling, decoder snapshot restore |
 | `audio_codecs.c` | Third-party audio decoder implementations (`dr_*`, `stb_vorbis`) |
-| `video.c` | Framebuffer and display |
-| `visualizer.c` | Visualizations: Bars, VU Meter, Dots, Line |
+| `video.c` | Framebuffer, drawing primitives (fill/bevel/blend/dither), and text rendering |
+| `visualizer.c` | Visualizations: Bars, VU Meter, Dots, Line (drawn inside `layout.viz_inner`) |
 | `metadata.c` | Track metadata parsing and album-art lookup/loading |
 | `image_codecs.c` | Third-party image decoder implementation (`stb_image`) |
 | `config.c` | LibRetro core options (declare + read) |
-| `layout.c` | Responsive UI layout computation |
+| `layout.c` | Responsive UI layout computation: stack fitting, transport auto-hide, title scaling |
+| `ui.c` | Screen composition: framed art, sunken visualizer panel, marquee title, progress bar, transport icons — both responsive and manual-offset paths |
 | `stb_vorbis_compat.h` | Shared Vorbis declarations used by `audio.c` and `metadata.c` |
 | `path_io.h` | UTF-8-aware file opening and path splitting, including wide Windows paths |
 | `core_state.h` | Serialized save-state layout, shared with the test harness |
@@ -76,7 +77,7 @@ Dependencies are not committed — they're fetched into `deps/` before building.
 python3 tests/run_tests.py
 gcc -shared -O2 -I./deps -I./src -o music_playlist_libretro.dll \
   src/core.c src/audio.c src/audio_codecs.c src/video.c src/visualizer.c \
-  src/metadata.c src/image_codecs.c src/config.c src/layout.c -lm
+  src/metadata.c src/image_codecs.c src/config.c src/layout.c src/ui.c -lm
 ```
 
 **macOS / Linux** — there is no setup script here; fetch deps manually (see the `curl` block in [`CONTRIBUTING.md`](CONTRIBUTING.md)), then run `python3 tests/run_tests.py`. The harness uses `cc` by default (override with `CC=`). The distributable DLL is built on Windows; on these platforms the harness is the primary local check.
@@ -105,7 +106,8 @@ gcc -shared -O2 -I./deps -I./src -o music_playlist_libretro.dll \
 **Hard constraints**
 - Render within **320×240, RGB565** — never assume other dimensions.
 - Keep memory usage minimal (embedded/emulator context).
-- New UI elements need **both** a responsive branch (positioned from `layout.*`) **and** a non-responsive fallback (positioned from the element's `media_*_y` offset). Responsive is default-On, but the Off path is wired into every drawing routine in `core.c` and `visualizer.c` — don't break it.
+- New UI elements need **both** a responsive branch (positioned from `layout.*`) **and** a non-responsive fallback (positioned from the element's `media_*_y` offset). Responsive is default-On, but the Off path is wired into every drawing routine in `ui.c` and `visualizer.c` — don't break it.
+- On short content areas the responsive layout degrades in a fixed order: the transport row auto-hides first, then the 2× title falls back to 1×, then the visualizer panel gives up height. Keep that priority intact when adding elements.
 
 ## LibRetro callbacks (`core.c`)
 
@@ -120,7 +122,7 @@ gcc -shared -O2 -I./deps -I./src -o music_playlist_libretro.dll \
 
 All keys are prefixed `media_`, declared in `config_declare_variables()` and read in `config_update()`. Defaults in parentheses.
 
-- **Visibility (On/Off, all On):** `media_show_art`, `media_show_txt`, `media_show_viz`, `media_show_bar`, `media_show_tim`, `media_show_ico`
+- **Visibility (On/Off, all On):** `media_show_art`, `media_show_txt`, `media_show_viz`, `media_show_bar`, `media_show_tim`, `media_show_ico` (transport icon row — additionally auto-hides in responsive mode when the content area is too short)
 - **Responsive layout:** `media_responsive` (On), `media_debug_layout` (Off), and usable-region bounds `media_ui_top` (20), `media_ui_bottom` (80), `media_ui_left` (10), `media_ui_right` (90), as percentages
 - **Manual Y offsets** (used mainly when responsive is Off): `media_art_y` (40), `media_txt_y` (150), `media_viz_y` (140), `media_bar_y` (180), `media_tim_y` (190), `media_ico_y` (20)
 - **Visualizer:** `media_viz_mode` (`Bars` | `VU Meter` | `Dots` | `Line`; legacy `FFT EQ` maps to `Bars`), `media_viz_bands` (40; presets 40/20), `media_viz_gradient` (On), `media_viz_peak_hold` (30)

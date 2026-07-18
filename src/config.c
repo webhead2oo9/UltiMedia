@@ -121,7 +121,7 @@ void config_declare_variables(retro_environment_t cb) {
         { "media_fg_r", "FG Red; 0|32|64|128|255" }, { "media_fg_g", "FG Green; 255|0|32|64|128" }, { "media_fg_b", "FG Blue; 0|32|64|128|255" },
         { "media_show_art", "Show Art; On|Off" }, { "media_show_txt", "Show Scroll Text; On|Off" },
         { "media_show_viz", "Show Visualizer; On|Off" }, { "media_show_bar", "Show Progress Bar; On|Off" },
-        { "media_show_tim", "Show Time; On|Off" }, { "media_show_ico", "Show Icons; On|Off" },
+        { "media_show_tim", "Show Time; On|Off" }, { "media_show_ico", "Show Transport Icons; On|Off" },
         { "media_responsive", "Responsive Layout; On|Off" },
         { "media_debug_layout", "Debug Layout Bounds; Off|On" },
         { "media_ui_top", "UI Top %; 20|0|10|30|40|50" },

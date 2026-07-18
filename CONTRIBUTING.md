@@ -19,12 +19,13 @@ All source lives in `src/`, split by responsibility:
 | `core.c` | LibRetro callbacks, playlist loading, runtime state, shuffle, save/load state |
 | `audio.c` | Audio decoding, resampling, decoder snapshot restore |
 | `audio_codecs.c` | Third-party audio decoder implementations (`dr_*`, `stb_vorbis`) |
-| `video.c` | Framebuffer and display |
+| `video.c` | Framebuffer, drawing primitives (fill/bevel/blend/dither), and text rendering |
 | `visualizer.c` | Audio visualizations (Bars, VU Meter, Dots, Line) |
 | `metadata.c` | Track metadata parsing and album art lookup/loading |
 | `image_codecs.c` | Third-party image decoder implementation (`stb_image`) |
 | `config.c` | LibRetro core options |
 | `layout.c` | Responsive UI layout computation |
+| `ui.c` | Screen composition: framed art, visualizer panel, marquee title, progress bar, transport icons |
 | `path_io.h` | UTF-8-aware file opening, including wide Windows paths |
 
 Tests live in `tests/`, and the Windows contributor helpers in `scripts/`.
@@ -83,7 +84,7 @@ To build the core manually inside a UCRT64 shell (with `deps/` already populated
 ```bash
 gcc -shared -O2 -I./deps -I./src -o music_playlist_libretro.dll \
   src/core.c src/audio.c src/audio_codecs.c src/video.c src/visualizer.c \
-  src/metadata.c src/image_codecs.c src/config.c src/layout.c -lm
+  src/metadata.c src/image_codecs.c src/config.c src/layout.c src/ui.c -lm
 ```
 
 ## Code style

@@ -13,6 +13,7 @@
 #include "config.h"
 #include "layout.h"
 #include "video.h"
+#include "ui.h"
 #include "audio.h"
 #include "metadata.h"
 #include "visualizer.h"
@@ -66,7 +67,6 @@ static bool is_shuffle = false;
 // the user changes the core option itself.
 static bool viz_mode_user_override = false;
 static int viz_mode_menu_value = 0;
-static char time_str[32];
 static int ff_rw_icon_timer = 0;
 static int ff_rw_dir = 0;
 static int seek_repeat_cooldown = 0;
@@ -127,26 +127,6 @@ static int is_valid_viz_mode(int mode) {
 
 static int normalize_viz_mode(int mode) {
     return (mode == VIZ_MODE_FFT_EQ_LEGACY) ? VIZ_MODE_BARS : mode;
-}
-
-static void draw_rect_outline(int x, int y, int w, int h, uint16_t color) {
-    if (w <= 0 || h <= 0) return;
-    int x2 = x + w - 1;
-    int y2 = y + h - 1;
-    for (int px = x; px <= x2; px++) {
-        draw_pixel(px, y, color);
-        draw_pixel(px, y2, color);
-    }
-    for (int py = y; py <= y2; py++) {
-        draw_pixel(x, py, color);
-        draw_pixel(x2, py, color);
-    }
-}
-
-static int playback_progress_width(int width) {
-    if (width <= 0 || total_frames == 0 || cur_frame == 0) return 0;
-    if (cur_frame >= total_frames) return width;
-    return (int)(((double)cur_frame / (double)total_frames) * (double)width);
 }
 
 // Helper function for case-insensitive string comparison
@@ -629,13 +609,13 @@ static void reset_runtime_state(bool preserve_shuffle_mode) {
     viz_mode_user_override = false;
     is_paused = false;
     if (!preserve_shuffle_mode) is_shuffle = false;
-    time_str[0] = '\0';
     ff_rw_icon_timer = 0;
     ff_rw_dir = 0;
     seek_repeat_cooldown = 0;
     config_needs_refresh = true;
     clear_shuffle_state();
     viz_reset_state();
+    ui_reset_marquee();
 }
 
 // Tear down the whole playback session: decoder, artwork, playlist, and
@@ -722,7 +702,8 @@ static bool open_track(int idx) {
 
     // Load metadata and album art
     metadata_load(p, m3u_base_path, cfg.track_text_mode);
-    scroll_x = cfg.responsive ? (layout.content_x + layout.content_w) : FB_WIDTH;
+    scroll_x = cfg.responsive ? layout.text.x : FB_WIDTH;
+    ui_reset_marquee();
     return true;
 }
 
@@ -754,7 +735,8 @@ static void refresh_config_and_layout(void) {
         current_idx < track_count &&
         tracks[current_idx]) {
         metadata_refresh_display(tracks[current_idx], cfg.track_text_mode);
-        scroll_x = cfg.responsive ? (layout.content_x + layout.content_w) : FB_WIDTH;
+        scroll_x = cfg.responsive ? layout.text.x : FB_WIDTH;
+        ui_reset_marquee();
     }
 }
 
@@ -819,6 +801,7 @@ void retro_run(void) {
     }
     if (button_pressed(RETRO_DEVICE_ID_JOYPAD_R)) open_next_track();
     if (button_pressed(RETRO_DEVICE_ID_JOYPAD_L)) open_previous_track();
+    if (ff_rw_icon_timer > 0) ff_rw_icon_timer--;
 
     // 2. Audio Core
     int16_t out_buf[SAMPLES_PER_FRAME * 2] = {0};
@@ -836,101 +819,18 @@ void retro_run(void) {
     audio_batch_cb(out_buf, SAMPLES_PER_FRAME);
 
     // 4. Rendering Section
-    video_clear(cfg.bg_rgb);
-
-    if (cfg.responsive) {
-        if (cfg.show_art && art_buffer && layout.art.w > 0 && layout.art.h > 0) {
-            for (int y = 0; y < layout.art.h; y++) {
-                int src_y = y * art_h_src / layout.art.h;
-                for (int x = 0; x < layout.art.w; x++) {
-                    int src_x = x * art_w_src / layout.art.w;
-                    draw_pixel(layout.art.x + x, layout.art.y + y, art_buffer[src_y * art_w_src + src_x]);
-                }
-            }
-        }
-
-        if (cfg.show_txt && layout.text.w > 0) {
-            int right_edge = layout.text.x + layout.text.w;
-            int text_w = (int)strlen(display_str) * GLYPH_WIDTH;
-            int left_bound = layout.text.x - text_w;
-            if (scroll_x > right_edge || scroll_x < left_bound)
-                scroll_x = right_edge;
-            draw_text_clipped(scroll_x, layout.text.y, display_str, cfg.fg_rgb, layout.text.x, layout.text.w);
-            scroll_x--;
-        }
-
-        if (cfg.show_viz) {
-            viz_draw();
-        }
-
-        if (cfg.show_bar && total_frames > 0 && layout.bar.w > 0) {
-            int filled_w = playback_progress_width(layout.bar.w);
-            for (int w = 0; w < layout.bar.w; w++) draw_pixel(layout.bar.x + w, layout.bar.y, cfg.bg_rgb | 0x18C3);
-            for (int w = 0; w < filled_w; w++) draw_pixel(layout.bar.x + w, layout.bar.y, cfg.fg_rgb);
-        }
-
-        if (cfg.show_tim && layout.time.w > 0) {
-            int sec = source_rate ? (int)(cur_frame / source_rate) : 0;
-            snprintf(time_str, sizeof(time_str), "%02d:%02d", sec / 60, sec % 60);
-            int time_x = layout.time.x + (layout.time.w - ((int)strlen(time_str) * GLYPH_WIDTH)) / 2;
-            draw_text(time_x, layout.time.y, time_str, cfg.fg_rgb);
-        }
-
-        if (cfg.show_ico && layout.icons.w > 0 && layout.icons.h > 0) {
-            if (is_shuffle) draw_text(layout.icon_shuffle_x, layout.icons.y, "SHUF", cfg.fg_rgb);
-            if (is_paused) draw_text(layout.icon_pause_x, layout.icons.y, "||", cfg.fg_rgb);
-            if (ff_rw_icon_timer > 0) {
-                draw_text(layout.icon_seek_x, layout.icons.y, (ff_rw_dir > 0) ? ">>" : "<<", cfg.fg_rgb);
-                ff_rw_icon_timer--;
-            }
-        }
-
-        if (cfg.debug_layout) {
-            // Overlay layout boxes for responsive tuning/debugging.
-            draw_rect_outline(layout.area_x, layout.area_y, layout.area_w, layout.area_h, 0x07FF);
-            draw_rect_outline(layout.content_x, layout.content_y, layout.content_w, layout.content_h, 0x07E0);
-            draw_rect_outline(layout.art.x, layout.art.y, layout.art.w, layout.art.h, 0xFFE0);
-            draw_rect_outline(layout.icons.x, layout.icons.y, layout.icons.w, layout.icons.h, 0xFD20);
-            draw_rect_outline(layout.text.x, layout.text.y, layout.text.w, layout.text.h, 0xF81F);
-            draw_rect_outline(layout.viz.x, layout.viz.y, layout.viz.w, layout.viz.h, 0xF800);
-            draw_rect_outline(layout.bar.x, layout.bar.y, layout.bar.w, layout.bar.h, 0xFFFF);
-            draw_rect_outline(layout.time.x, layout.time.y, layout.time.w, layout.time.h, 0x001F);
-        }
-    } else {
-        if (cfg.show_art && art_buffer) {
-            for (int y = 0; y < 80; y++) {
-                for (int x = 0; x < 80; x++) {
-                    draw_pixel(120 + x, cfg.art_y + y, art_buffer[(y * art_h_src / 80) * art_w_src + (x * art_w_src / 80)]);
-                }
-            }
-        }
-        if (cfg.show_txt) {
-            draw_text(scroll_x, cfg.txt_y, display_str, cfg.fg_rgb);
-            scroll_x--;
-            if (scroll_x < -((int)strlen(display_str) * GLYPH_WIDTH)) scroll_x = FB_WIDTH;
-        }
-        if (cfg.show_viz) {
-            viz_draw();
-        }
-        if (cfg.show_bar && total_frames > 0) {
-            int filled_w = playback_progress_width(200);
-            for (int w = 0; w < 200; w++) draw_pixel(60 + w, cfg.bar_y, cfg.bg_rgb | 0x18C3);
-            for (int w = 0; w < filled_w; w++) draw_pixel(60 + w, cfg.bar_y, cfg.fg_rgb);
-        }
-        if (cfg.show_tim) {
-            int sec = source_rate ? (int)(cur_frame / source_rate) : 0;
-            snprintf(time_str, sizeof(time_str), "%02d:%02d", sec / 60, sec % 60);
-            draw_text(140, cfg.tim_y, time_str, cfg.fg_rgb);
-        }
-        if (cfg.show_ico) {
-            if (is_shuffle) draw_text(20, cfg.ico_y, "SHUF", cfg.fg_rgb);
-            if (is_paused) draw_text(280, cfg.ico_y, "||", cfg.fg_rgb);
-            if (ff_rw_icon_timer > 0) {
-                draw_text(60, cfg.ico_y, (ff_rw_dir > 0) ? ">>" : "<<", cfg.fg_rgb);
-                ff_rw_icon_timer--;
-            }
-        }
-    }
+    UiFrame frame = {
+        .paused = is_paused,
+        .shuffle = is_shuffle,
+        .seek_dir = (ff_rw_icon_timer > 0) ? ff_rw_dir : 0,
+        .track_index = current_idx,
+        .track_count = track_count,
+        .cur_frame = cur_frame,
+        .total_frames = total_frames,
+        .source_rate = source_rate,
+        .scroll_x = &scroll_x,
+    };
+    ui_draw(&frame);
     video_cb(framebuffer, FB_WIDTH, FB_HEIGHT, FB_WIDTH * 2);
 }
 

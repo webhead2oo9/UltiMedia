@@ -34,12 +34,12 @@ static int viz_band_x(int band_idx, int band_count, int item_w, int start_x, int
     if (!cfg.responsive) return start_x + (band_idx * spacing);
 
     if (item_w < 1) item_w = 1;
-    if (item_w > layout.viz.w) item_w = layout.viz.w;
-    if (layout.viz.w <= item_w) return layout.viz.x;
-    if (band_count <= 1) return layout.viz.x + (layout.viz.w - item_w) / 2;
+    if (item_w > layout.viz_inner.w) item_w = layout.viz_inner.w;
+    if (layout.viz_inner.w <= item_w) return layout.viz_inner.x;
+    if (band_count <= 1) return layout.viz_inner.x + (layout.viz_inner.w - item_w) / 2;
 
-    int span = layout.viz.w - item_w;
-    return layout.viz.x + (band_idx * span) / (band_count - 1);
+    int span = layout.viz_inner.w - item_w;
+    return layout.viz_inner.x + (band_idx * span) / (band_count - 1);
 }
 
 uint16_t get_gradient_color(float level) {
@@ -349,7 +349,7 @@ static void draw_bars_mode(int band_count) {
         bar_width = layout.viz_bar_width;
         spacing = layout.viz_spacing;
         max_h = layout.viz_max_h;
-        base_y = layout.viz.y + layout.viz.h - 1;
+        base_y = layout.viz_inner.y + layout.viz_inner.h - 1;
     } else {
         start_x = (band_count == 40) ? 80 : 100;
         bar_width = (band_count == 40) ? 2 : 4;
@@ -360,7 +360,7 @@ static void draw_bars_mode(int band_count) {
     if (max_h < 1) max_h = 1;
 
     int draw_bar_width = bar_width;
-    if (cfg.responsive && draw_bar_width > layout.viz.w) draw_bar_width = layout.viz.w;
+    if (cfg.responsive && draw_bar_width > layout.viz_inner.w) draw_bar_width = layout.viz_inner.w;
 
     for (int i = 0; i < band_count; i++) {
         int h = (int)(viz_levels[i] * max_h);
@@ -395,20 +395,20 @@ static void draw_dots_mode(int band_count) {
     if (cfg.responsive) {
         spacing = layout.viz_spacing;
         max_h = layout.viz_max_h;
-        base_y = layout.viz.y + layout.viz.h - 1;
+        base_y = layout.viz_inner.y + layout.viz_inner.h - 1;
         if (spacing < 2) spacing = 2;
 
         // Keep 2x2 dots inside the responsive visualizer bounds.
         if (band_count > 1) {
             int dots_w = spacing * (band_count - 1) + 2;
-            if (dots_w > layout.viz.w) {
-                spacing = (layout.viz.w - 2) / (band_count - 1);
+            if (dots_w > layout.viz_inner.w) {
+                spacing = (layout.viz_inner.w - 2) / (band_count - 1);
                 if (spacing < 1) spacing = 1;
                 dots_w = spacing * (band_count - 1) + 2;
             }
-            start_x = layout.viz.x + (layout.viz.w - dots_w) / 2;
+            start_x = layout.viz_inner.x + (layout.viz_inner.w - dots_w) / 2;
         } else {
-            start_x = layout.viz.x + (layout.viz.w - 2) / 2;
+            start_x = layout.viz_inner.x + (layout.viz_inner.w - 2) / 2;
         }
     } else {
         start_x = (band_count == 40) ? 100 : 130;
@@ -451,7 +451,7 @@ static void draw_line_mode(int band_count) {
         start_x = layout.viz_start_x;
         spacing = layout.viz_spacing;
         max_h = layout.viz_max_h;
-        base_y = layout.viz.y + layout.viz.h - 1;
+        base_y = layout.viz_inner.y + layout.viz_inner.h - 1;
     } else {
         start_x = (band_count == 40) ? 80 : 100;
         spacing = (band_count == 40) ? 4 : 6;
@@ -509,17 +509,17 @@ static void draw_vu_meter_mode(void) {
     if (cfg.responsive) {
         meter_w = layout.viz_meter_w;
         if (meter_w < 1) meter_w = 1;
-        meter_x = layout.viz.x + (layout.viz.w - meter_w);
-        label_x = layout.viz.x;
+        meter_x = layout.viz_inner.x + (layout.viz_inner.w - meter_w);
+        label_x = layout.viz_inner.x;
 
-        if (layout.viz.h >= pair_h) {
-            int pair_top = layout.viz.y + (layout.viz.h - pair_h) / 2;
+        if (layout.viz_inner.h >= pair_h) {
+            int pair_top = layout.viz_inner.y + (layout.viz_inner.h - pair_h) / 2;
             left_y = pair_top;
             right_y = pair_top + row_step;
         } else {
             // Too short for two meters, show only left as a mono meter
-            left_y = layout.viz.y + (layout.viz.h - meter_h) / 2;
-            if (left_y < layout.viz.y) left_y = layout.viz.y;
+            left_y = layout.viz_inner.y + (layout.viz_inner.h - meter_h) / 2;
+            if (left_y < layout.viz_inner.y) left_y = layout.viz_inner.y;
             right_y = -1;
         }
     }
@@ -574,7 +574,7 @@ void viz_reset_state(void) {
 
 void viz_draw(void) {
     int band_count = cfg.viz_bands;
-    if (cfg.responsive && (layout.viz.w <= 0 || layout.viz.h <= 0)) return;
+    if (cfg.responsive && (layout.viz_inner.w <= 0 || layout.viz_inner.h <= 0)) return;
 
     if (cfg.viz_mode == VIZ_MODE_BARS || cfg.viz_mode == VIZ_MODE_FFT_EQ_LEGACY) {
         draw_bars_mode(band_count);
