@@ -349,7 +349,9 @@ static void draw_bars_mode(int band_count) {
     if (draw_bar_width > layout.viz_inner.w) draw_bar_width = layout.viz_inner.w;
     if (draw_bar_width < 1) draw_bar_width = 1;
 
-    uint16_t unlit_color = mix565(cfg.bg_rgb, cfg.fg_rgb, 28);
+    // Unlit segments sit just above the sunken panel shade (ui_palette mixes
+    // the panel at bg->black 150), not the brighter screen background.
+    uint16_t unlit_color = mix565(mix565(cfg.bg_rgb, 0x0000, 150), cfg.fg_rgb, 16);
 
     for (int i = 0; i < band_count; i++) {
         int h = (int)(viz_levels[i] * max_h);
