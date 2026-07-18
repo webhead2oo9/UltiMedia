@@ -71,31 +71,34 @@ static void compute_viz_inner(void) {
 }
 
 static void place_art(void) {
-    const int gap_after_art = 4;
+    const int gap_after_art = 8;   // room for the frame, drop shadow, and breathing space
+    const int frame_inset = 2;     // bevel frame drawn just outside the art rect
     if (!cfg.show_art) return;
 
     int art_side = min_i(layout.area_w, layout.area_h) * 40 / 100;
     art_side = clamp_i(art_side, 32, 120);
 
     if (layout.is_wide) {
-        int max_side = layout.area_w - gap_after_art - 48;
+        int max_side = layout.area_w - frame_inset - gap_after_art - 48;
         if (max_side < 0) max_side = 0;
         if (art_side > max_side) art_side = max_side;
-        if (art_side > layout.area_h) art_side = layout.area_h;
+        if (art_side > layout.area_h - frame_inset) art_side = layout.area_h - frame_inset;
         if (art_side > 0) {
-            layout.art.x = layout.area_x;
-            layout.art.y = layout.area_y + (layout.area_h - art_side) / 2;
+            // Top-aligned so the art frame's top edge lines up with the
+            // visualizer panel's top edge instead of floating mid-column.
+            layout.art.x = layout.area_x + frame_inset;
+            layout.art.y = layout.area_y + frame_inset;
             layout.art.w = art_side;
             layout.art.h = art_side;
         }
     } else {
-        int max_side = layout.area_h - gap_after_art - 56;
+        int max_side = layout.area_h - frame_inset - gap_after_art - 56;
         if (max_side < 0) max_side = 0;
         if (art_side > max_side) art_side = max_side;
-        if (art_side > layout.area_w) art_side = layout.area_w;
+        if (art_side > layout.area_w - frame_inset * 2) art_side = layout.area_w - frame_inset * 2;
         if (art_side > 0) {
             layout.art.x = layout.area_x + (layout.area_w - art_side) / 2;
-            layout.art.y = layout.area_y;
+            layout.art.y = layout.area_y + frame_inset;
             layout.art.w = art_side;
             layout.art.h = art_side;
         }
@@ -261,11 +264,11 @@ void layout_compute(void) {
     }
 
     if (use_bar) {
-        int bar_w = layout.content_w * 80 / 100;
-        if (bar_w < 40) bar_w = layout.content_w;
-        layout.bar.w = bar_w;
+        // Full content width so the bar's left edge lines up with the panel
+        // and title instead of floating centered.
+        layout.bar.w = layout.content_w;
         layout.bar.h = bar_h;
-        layout.bar.x = layout.content_x + (layout.content_w - bar_w) / 2;
+        layout.bar.x = layout.content_x;
         layout.bar.y = y;
         y += bar_h;
         if (use_time) y += cluster_gap;

@@ -92,14 +92,17 @@ static void icon_next(int x, int y, uint16_t c) {
 }
 
 static void icon_shuffle(int x, int y, uint16_t c) {
-    for (int i = 0; i < 9; i++) {
-        draw_pixel(x + i, y + i, c);
-        draw_pixel(x + i, y + 8 - i, c);
+    // Two opposing arrows: top points right, bottom points left.
+    for (int i = 0; i < 7; i++) draw_pixel(x + i, y + 2, c);
+    for (int r = 0; r < 5; r++) {
+        int d = (r < 3) ? r : 4 - r;
+        for (int i = 0; i <= d; i++) draw_pixel(x + 6 + i, y + r, c);
     }
-    draw_pixel(x + 7, y, c);
-    draw_pixel(x + 8, y + 1, c);
-    draw_pixel(x + 7, y + 8, c);
-    draw_pixel(x + 8, y + 7, c);
+    for (int i = 3; i < 10; i++) draw_pixel(x + i, y + 7, c);
+    for (int r = 0; r < 5; r++) {
+        int d = (r < 3) ? r : 4 - r;
+        for (int i = 0; i <= d; i++) draw_pixel(x + 3 - i, y + 5 + r, c);
+    }
 }
 
 static void icon_seek(int x, int y, int dir, uint16_t c) {
