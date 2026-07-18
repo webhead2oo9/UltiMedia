@@ -211,8 +211,11 @@ void layout_compute(void) {
     }
 
     if (use_viz && fixed_h > layout.content_h) {
+        // VU never shrinks below two meter rows (no mono fallback); the
+        // overflow guards drop other elements instead.
+        int viz_floor = (cfg.viz_mode == VIZ_MODE_VU) ? vu_compact_h : 12;
         viz_h -= (fixed_h - layout.content_h);
-        if (viz_h < 12) viz_h = 12;
+        if (viz_h < viz_floor) viz_h = viz_floor;
         fixed_h = viz_h + cluster_h;
     }
 

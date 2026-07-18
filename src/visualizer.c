@@ -279,40 +279,39 @@ static void fft_update_levels(const int16_t *audio_buf, int samples_per_frame, i
     }
 }
 
+// Map channel RMS onto the meter's -40..0 dB sweep.
+static float vu_db_level(float rms) {
+    if (rms <= 0.0001f) return 0.0f;
+    float db = 20.0f * log10f(rms);
+    float v = (db + 40.0f) / 40.0f;
+    if (v < 0.0f) v = 0.0f;
+    if (v > 1.0f) v = 1.0f;
+    return v;
+}
+
 static void vu_update_levels(const int16_t *audio_buf, int samples_per_frame, int band_count) {
-    float left_level = 0.0f, right_level = 0.0f;
-    float left_sum = 0.0f, right_sum = 0.0f;
-    float left_peak = 0.0f, right_peak = 0.0f;
+    float left_sq = 0.0f, right_sq = 0.0f;
     int level_samples = 0;
 
     if (audio_buf && samples_per_frame > 0) {
         for (int i = 0; i < samples_per_frame; i += 4) {
-            int32_t ls = audio_buf[i * 2], rs = audio_buf[i * 2 + 1];
-            float l = (ls < 0 ? -ls : ls) / 32768.0f;
-            float r = (rs < 0 ? -rs : rs) / 32768.0f;
-            left_sum += l;
-            right_sum += r;
-            if (l > left_peak) left_peak = l;
-            if (r > right_peak) right_peak = r;
+            float l = (float)audio_buf[i * 2] / 32768.0f;
+            float r = (float)audio_buf[i * 2 + 1] / 32768.0f;
+            left_sq += l * l;
+            right_sq += r * r;
             level_samples++;
         }
     }
 
+    float left_target = 0.0f, right_target = 0.0f;
     if (level_samples > 0) {
-        float left_avg = left_sum / (float)level_samples;
-        float right_avg = right_sum / (float)level_samples;
-
-        // Blend average + peak so channels stay responsive but don't collapse to identical values.
-        left_level = left_avg * 0.75f + left_peak * 0.25f;
-        right_level = right_avg * 0.75f + right_peak * 0.25f;
-        if (left_level > 1.0f) left_level = 1.0f;
-        if (right_level > 1.0f) right_level = 1.0f;
+        left_target = vu_db_level(sqrtf(left_sq / (float)level_samples));
+        right_target = vu_db_level(sqrtf(right_sq / (float)level_samples));
     }
 
-    if (left_level > viz_levels[0]) viz_levels[0] = left_level;
-    else viz_levels[0] *= 0.85f;
-    if (right_level > viz_levels[1]) viz_levels[1] = right_level;
-    else viz_levels[1] *= 0.85f;
+    // ~150ms integration in both directions for the analog needle feel.
+    viz_levels[0] = viz_levels[0] * 0.88f + left_target * 0.12f;
+    viz_levels[1] = viz_levels[1] * 0.88f + right_target * 0.12f;
 
     viz_update_peak(0);
     viz_update_peak(1);
@@ -443,6 +442,43 @@ static void draw_line_mode(int band_count) {
     }
 }
 
+// Meter face for the -40..0 dB sweep: unlit track, ticks at -30/-20/-10/-6,
+// red zone above -6 dB.
+static void vu_draw_face(int meter_x, int row_y, int meter_w, int meter_h) {
+    uint16_t track_color = mix565(cfg.bg_rgb, cfg.fg_rgb, 30);
+    uint16_t tick_color = mix565(cfg.bg_rgb, cfg.fg_rgb, 100);
+    uint16_t zone_color = mix565(cfg.bg_rgb, 0xF800, 100);
+    static const float tick_pos[4] = {0.25f, 0.50f, 0.75f, 0.85f};
+
+    draw_rect_fill(meter_x, row_y, meter_w, meter_h, track_color);
+    int zone_x = (int)((float)meter_w * 0.85f);
+    draw_rect_fill(meter_x + zone_x, row_y, meter_w - zone_x, meter_h, zone_color);
+    for (int t = 0; t < 4; t++) {
+        int tx = meter_x + (int)((float)meter_w * tick_pos[t]);
+        for (int y = -1; y <= meter_h; y++) draw_pixel(tx, row_y + y, tick_color);
+    }
+}
+
+static void vu_draw_meter_row(int label_x, int meter_x, int row_y, int meter_w,
+                              int meter_h, int channel, const char *label) {
+    draw_text(label_x, row_y, label, cfg.fg_rgb);
+    vu_draw_face(meter_x, row_y, meter_w, meter_h);
+
+    int fill_w = (int)(viz_levels[channel] * meter_w);
+    if (fill_w > meter_w) fill_w = meter_w;
+    for (int x = 0; x < fill_w; x++) {
+        uint16_t color = cfg.viz_gradient ? get_gradient_color((float)x / (float)meter_w) : cfg.fg_rgb;
+        for (int y = 0; y < meter_h; y++) draw_pixel(meter_x + x, row_y + y, color);
+    }
+
+    if (cfg.viz_peak_hold > 0 && viz_peak_timers[channel] > 0) {
+        uint16_t peak_color = cfg.viz_gradient ? 0xF800 : cfg.fg_rgb;
+        int peak_x = (int)(viz_peaks[channel] * meter_w);
+        if (peak_x >= meter_w) peak_x = meter_w - 1;
+        for (int y = 0; y < meter_h; y++) draw_pixel(meter_x + peak_x, row_y + y, peak_color);
+    }
+}
+
 static void draw_vu_meter_mode(void) {
     const int meter_h = 4;
     const int meter_gap = 4;
@@ -450,54 +486,17 @@ static void draw_vu_meter_mode(void) {
     const int row_step = (meter_h + meter_gap > label_h) ? (meter_h + meter_gap) : label_h;
     const int pair_h = row_step + label_h;
 
+    // Two meters or nothing — a lone mono meter reads as a broken channel.
+    if (layout.viz_inner.h < pair_h) return;
+
     int meter_w = layout.viz_meter_w;
     if (meter_w < 1) meter_w = 1;
     int meter_x = layout.viz_inner.x + (layout.viz_inner.w - meter_w);
     int label_x = layout.viz_inner.x;
-    int left_y;
-    int right_y;
+    int pair_top = layout.viz_inner.y + (layout.viz_inner.h - pair_h) / 2;
 
-    if (layout.viz_inner.h >= pair_h) {
-        int pair_top = layout.viz_inner.y + (layout.viz_inner.h - pair_h) / 2;
-        left_y = pair_top;
-        right_y = pair_top + row_step;
-    } else {
-        // Too short for two meters, show only left as a mono meter
-        left_y = layout.viz_inner.y + (layout.viz_inner.h - meter_h) / 2;
-        if (left_y < layout.viz_inner.y) left_y = layout.viz_inner.y;
-        right_y = -1;
-    }
-
-    // Draw Left meter
-    draw_text(label_x, left_y, "L", cfg.fg_rgb);
-    int left_w = (int)(viz_levels[0] * meter_w);
-    if (left_w > meter_w) left_w = meter_w;
-    for (int x = 0; x < left_w; x++) {
-        uint16_t color = cfg.viz_gradient ? get_gradient_color((float)x / (float)meter_w) : cfg.fg_rgb;
-        for (int y = 0; y < meter_h; y++) draw_pixel(meter_x + x, left_y + y, color);
-    }
-    uint16_t peak_color = cfg.viz_gradient ? 0xF800 : cfg.fg_rgb;
-    if (cfg.viz_peak_hold > 0 && viz_peak_timers[0] > 0) {
-        int peak_x = (int)(viz_peaks[0] * meter_w);
-        if (peak_x >= meter_w) peak_x = meter_w - 1;
-        for (int y = 0; y < meter_h; y++) draw_pixel(meter_x + peak_x, left_y + y, peak_color);
-    }
-
-    // Draw Right meter (skip if too short for two meters)
-    if (right_y >= 0) {
-        draw_text(label_x, right_y, "R", cfg.fg_rgb);
-        int right_w = (int)(viz_levels[1] * meter_w);
-        if (right_w > meter_w) right_w = meter_w;
-        for (int x = 0; x < right_w; x++) {
-            uint16_t color = cfg.viz_gradient ? get_gradient_color((float)x / (float)meter_w) : cfg.fg_rgb;
-            for (int y = 0; y < meter_h; y++) draw_pixel(meter_x + x, right_y + y, color);
-        }
-        if (cfg.viz_peak_hold > 0 && viz_peak_timers[1] > 0) {
-            int peak_x = (int)(viz_peaks[1] * meter_w);
-            if (peak_x >= meter_w) peak_x = meter_w - 1;
-            for (int y = 0; y < meter_h; y++) draw_pixel(meter_x + peak_x, right_y + y, peak_color);
-        }
-    }
+    vu_draw_meter_row(label_x, meter_x, pair_top, meter_w, meter_h, 0, "L");
+    vu_draw_meter_row(label_x, meter_x, pair_top + row_step, meter_w, meter_h, 1, "R");
 }
 
 void viz_reset_state(void) {
