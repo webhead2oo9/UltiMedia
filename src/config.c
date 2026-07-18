@@ -80,14 +80,7 @@ void config_update(retro_environment_t environ_cb) {
     cfg.show_bar = get_bool_var(environ_cb, "media_show_bar", true);
     cfg.show_tim = get_bool_var(environ_cb, "media_show_tim", true);
     cfg.show_ico = get_bool_var(environ_cb, "media_show_ico", true);
-    cfg.responsive = get_bool_var(environ_cb, "media_responsive", true);
     cfg.debug_layout = get_bool_var(environ_cb, "media_debug_layout", false);
-    cfg.art_y = get_int_var(environ_cb, "media_art_y", 40, -4096, 4096);
-    cfg.txt_y = get_int_var(environ_cb, "media_txt_y", 150, -4096, 4096);
-    cfg.viz_y = get_int_var(environ_cb, "media_viz_y", 140, -4096, 4096);
-    cfg.bar_y = get_int_var(environ_cb, "media_bar_y", 180, -4096, 4096);
-    cfg.tim_y = get_int_var(environ_cb, "media_tim_y", 190, -4096, 4096);
-    cfg.ico_y = get_int_var(environ_cb, "media_ico_y", 20, -4096, 4096);
     cfg.ui_top = get_int_var(environ_cb, "media_ui_top", 20, 0, 100);
     cfg.ui_bottom = get_int_var(environ_cb, "media_ui_bottom", 80, 0, 100);
     cfg.ui_left = get_int_var(environ_cb, "media_ui_left", 10, 0, 100);
@@ -122,15 +115,11 @@ void config_declare_variables(retro_environment_t cb) {
         { "media_show_art", "Show Art; On|Off" }, { "media_show_txt", "Show Scroll Text; On|Off" },
         { "media_show_viz", "Show Visualizer; On|Off" }, { "media_show_bar", "Show Progress Bar; On|Off" },
         { "media_show_tim", "Show Time; On|Off" }, { "media_show_ico", "Show Transport Icons; On|Off" },
-        { "media_responsive", "Responsive Layout; On|Off" },
         { "media_debug_layout", "Debug Layout Bounds; Off|On" },
         { "media_ui_top", "UI Top %; 20|0|10|30|40|50" },
         { "media_ui_bottom", "UI Bottom %; 80|50|60|70|90|100" },
         { "media_ui_left", "UI Left %; 10|0|20|30" },
         { "media_ui_right", "UI Right %; 90|70|80|100" },
-        { "media_art_y", "Art Y; 40|0|80|120" }, { "media_txt_y", "Text Y; 150|20|120|200" },
-        { "media_viz_y", "Viz Y; 140|80|200" }, { "media_bar_y", "Bar Y; 180|100|210" },
-        { "media_tim_y", "Time Y; 190|110|220" }, { "media_ico_y", "Icon Y; 20|50|200" },
         { "media_viz_bands", "Viz Bands; 40|20" },
         { "media_viz_mode", "Viz Mode; Bars|VU Meter|Dots|Line" },
         { "media_viz_gradient", "Viz Gradient; On|Off" },

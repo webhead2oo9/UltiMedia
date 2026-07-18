@@ -1001,7 +1001,6 @@ static bool test_config_layout_smoke(TestContext *ctx) {
     char path[MAX_PATH_LEN];
 
     prepare_test();
-    set_env_option("media_responsive", "Off");
     set_env_option("media_show_art", "Off");
     set_env_option("media_viz_mode", "Line");
     set_env_option("media_viz_bands", "20");
@@ -1014,8 +1013,6 @@ static bool test_config_layout_smoke(TestContext *ctx) {
 
     run_frames(6);
 
-    if (!require_true(cfg.responsive == false, "config_layout_smoke: expected responsive layout to be off"))
-        return false;
     if (!require_true(cfg.viz_mode == VIZ_MODE_LINE, "config_layout_smoke: expected line visualizer mode"))
         return false;
     if (!require_true(cfg.viz_bands == 20, "config_layout_smoke: expected 20 visualizer bands"))
@@ -1039,7 +1036,6 @@ static bool test_vu_mode_updates_once_per_frame(TestContext *ctx) {
     int right_timer_before_draw = 0;
 
     prepare_test();
-    set_env_option("media_responsive", "Off");
     set_env_option("media_show_art", "Off");
     set_env_option("media_viz_mode", "VU Meter");
     set_env_option("media_viz_peak_hold", "3");
@@ -1119,7 +1115,6 @@ static bool test_track_change_resets_fft_visualizer_state(TestContext *ctx) {
     bool saw_level = false;
 
     prepare_test();
-    set_env_option("media_responsive", "Off");
     set_env_option("media_show_art", "Off");
     set_env_option("media_viz_mode", "Bars");
     set_env_option("media_viz_bands", "20");

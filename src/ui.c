@@ -1,6 +1,5 @@
 // Screen composition for the Hi-Fi Deck look: background, framed art, sunken
-// visualizer panel, marquee title, progress bar, and transport icons. Handles
-// both the responsive layout and the manual media_*_y offset fallback.
+// visualizer panel, marquee title, progress bar, and transport icons.
 #include "ui.h"
 #include "video.h"
 #include "config.h"
@@ -105,23 +104,6 @@ static void icon_shuffle(int x, int y, uint16_t c) {
     }
 }
 
-static void icon_seek(int x, int y, int dir, uint16_t c) {
-    // Double chevron pointing in the seek direction.
-    for (int r = 0; r < ICON_SIZE; r++) {
-        int d = (r < ICON_SIZE / 2) ? r : ICON_SIZE - 1 - r;
-        int w = 1 + d;
-        for (int i = 0; i < w; i++) {
-            if (dir > 0) {
-                draw_pixel(x + i, y + r, c);
-                draw_pixel(x + 5 + i, y + r, c);
-            } else {
-                draw_pixel(x + ICON_SIZE - 1 - i, y + r, c);
-                draw_pixel(x + 4 - i, y + r, c);
-            }
-        }
-    }
-}
-
 // ---- Shared building blocks ------------------------------------------------
 
 static void ui_blit_art(int x, int y, int w, int h) {
@@ -182,8 +164,6 @@ static void ui_draw_debug_overlay(void) {
     draw_rect_outline(layout.time.x, layout.time.y, layout.time.w, layout.time.h, 0x001F);
 }
 
-// ---- Responsive layout -----------------------------------------------------
-
 static void ui_draw_transport(const UiFrame *f, const UiPalette *pal) {
     Rect r = layout.icons;
     int y = r.y + (r.h - ICON_SIZE) / 2;
@@ -210,7 +190,7 @@ static void ui_draw_transport(const UiFrame *f, const UiPalette *pal) {
     }
 }
 
-static void ui_draw_responsive(UiFrame *f, const UiPalette *pal) {
+static void ui_draw_screen(UiFrame *f, const UiPalette *pal) {
     if (cfg.show_art && layout.art.w > 0 && layout.art.h > 0)
         ui_draw_art_framed(layout.art.x, layout.art.y, layout.art.w, layout.art.h, pal);
 
@@ -260,53 +240,8 @@ static void ui_draw_responsive(UiFrame *f, const UiPalette *pal) {
     if (cfg.debug_layout) ui_draw_debug_overlay();
 }
 
-// ---- Manual-offset fallback (media_*_y positions) --------------------------
-
-static void ui_draw_legacy(UiFrame *f, const UiPalette *pal) {
-    if (cfg.show_art && art_buffer)
-        ui_draw_art_framed(120, cfg.art_y, 80, 80, pal);
-
-    if (cfg.show_txt) {
-        draw_text(*f->scroll_x, cfg.txt_y, display_str, pal->fg);
-        (*f->scroll_x)--;
-        if (*f->scroll_x < -((int)strlen(display_str) * GLYPH_WIDTH)) *f->scroll_x = FB_WIDTH;
-    }
-
-    if (cfg.show_viz) viz_draw();
-
-    if (cfg.show_bar && f->total_frames > 0) {
-        draw_rect_outline(60, cfg.bar_y, 200, 8, pal->fg_dim);
-        draw_rect_fill(61, cfg.bar_y + 1, 198, 6, pal->panel);
-        int fill = progress_width(f, 198);
-        if (fill > 0) draw_rect_fill(61, cfg.bar_y + 1, fill, 6, pal->fg_dim);
-        int handle_x = 61 + ((fill > 2) ? fill - 2 : 0);
-        draw_rect_fill(handle_x, cfg.bar_y + 1, 2, 6, pal->handle);
-    }
-
-    if (cfg.show_tim) {
-        char elapsed[16];
-        format_time(elapsed, sizeof(elapsed), f->cur_frame, f->source_rate);
-        if (f->total_frames > 0) {
-            char total[16];
-            char line[40];
-            format_time(total, sizeof(total), f->total_frames, f->source_rate);
-            snprintf(line, sizeof(line), "%s / %s", elapsed, total);
-            draw_text((FB_WIDTH - (int)strlen(line) * GLYPH_WIDTH) / 2, cfg.tim_y, line, pal->fg);
-        } else {
-            draw_text(140, cfg.tim_y, elapsed, pal->fg);
-        }
-    }
-
-    if (cfg.show_ico) {
-        if (f->shuffle) icon_shuffle(20, cfg.ico_y, pal->fg);
-        if (f->paused) icon_pause(280, cfg.ico_y, pal->fg);
-        if (f->seek_dir != 0) icon_seek(60, cfg.ico_y, f->seek_dir, pal->fg);
-    }
-}
-
 void ui_draw(UiFrame *frame) {
     UiPalette pal = ui_palette();
     video_fill_vgradient(pal.bg_top, pal.bg_bottom);
-    if (cfg.responsive) ui_draw_responsive(frame, &pal);
-    else ui_draw_legacy(frame, &pal);
+    ui_draw_screen(frame, &pal);
 }

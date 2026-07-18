@@ -702,7 +702,7 @@ static bool open_track(int idx) {
 
     // Load metadata and album art
     metadata_load(p, m3u_base_path, cfg.track_text_mode);
-    scroll_x = cfg.responsive ? layout.text.x : FB_WIDTH;
+    scroll_x = layout.text.x;
     ui_reset_marquee();
     return true;
 }
@@ -726,8 +726,7 @@ static void apply_config_update(void) {
 static void refresh_config_and_layout(void) {
     TrackTextMode old_track_text_mode = cfg.track_text_mode;
     apply_config_update();
-    if (cfg.responsive)
-        layout_compute();
+    layout_compute();
 
     if (old_track_text_mode != cfg.track_text_mode &&
         track_count > 0 &&
@@ -735,7 +734,7 @@ static void refresh_config_and_layout(void) {
         current_idx < track_count &&
         tracks[current_idx]) {
         metadata_refresh_display(tracks[current_idx], cfg.track_text_mode);
-        scroll_x = cfg.responsive ? layout.text.x : FB_WIDTH;
+        scroll_x = layout.text.x;
         ui_reset_marquee();
     }
 }
@@ -797,7 +796,7 @@ void retro_run(void) {
     if (button_pressed(RETRO_DEVICE_ID_JOYPAD_X)) {
         cfg.viz_mode = next_viz_mode(cfg.viz_mode);
         viz_mode_user_override = true;
-        if (cfg.responsive) layout_compute();
+        layout_compute();
     }
     if (button_pressed(RETRO_DEVICE_ID_JOYPAD_R)) open_next_track();
     if (button_pressed(RETRO_DEVICE_ID_JOYPAD_L)) open_previous_track();
@@ -945,8 +944,7 @@ bool retro_load_game(const struct retro_game_info *g) {
 
     start_shuffle_cycle(generate_shuffle_seed());
     apply_config_update();
-    if (cfg.responsive)
-        layout_compute();
+    layout_compute();
 
     bool opened = open_track(0);
     if (!opened) {
@@ -1129,7 +1127,7 @@ bool retro_unserialize(const void *d, size_t s) {
 
     apply_config_update();
     cfg.viz_mode = normalize_viz_mode(state->viz_mode);
-    if (cfg.responsive) layout_compute();
+    layout_compute();
 
     reset_runtime_state(state->is_shuffle != 0);
     viz_mode_user_override = (cfg.viz_mode != viz_mode_menu_value);

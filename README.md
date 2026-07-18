@@ -69,7 +69,7 @@ When a track loads, art is searched in this order:
 - Show Visualizer
 - Show Progress Bar
 - Show Time
-- Show Icons
+- Show Transport Icons (also auto-hides on its own when the layout gets too short)
 
 ### Visualizer
 
@@ -85,21 +85,11 @@ When a track loads, art is searched in this order:
   - `Show filename with extension`
   - `Show Filename without extension`
 
-### Responsive Layout
+### Layout
 
-- Responsive Layout: `On/Off` (default `On`)
 - UI Top / Bottom / Left / Right (%): defines the usable screen region
 - Debug Layout Bounds: `Off/On`
-  - Draws colored layout boxes to help tune responsive positioning
-
-### Manual Y Offsets (mainly for non-responsive mode)
-
-- Art Y
-- Text Y
-- Viz Y
-- Bar Y
-- Time Y
-- Icon Y
+  - Draws colored layout boxes to help tune positioning
 
 ### Colors
 
