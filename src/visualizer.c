@@ -419,9 +419,16 @@ static void draw_line_mode(int band_count) {
             int dy = next_h - h;
 
             for (int step = 0; step < dx; step++) {
-                int interp_y = h + (dy * step) / dx;
-                uint16_t interp_color = cfg.viz_gradient ? get_gradient_color((float)interp_y / (float)max_h) : cfg.fg_rgb;
-                draw_pixel(x + step, base_y - interp_y, interp_color);
+                // Fill the vertical span to the next column so steep slopes
+                // stay connected instead of dissolving into scattered dots.
+                int y0 = h + (dy * step) / dx;
+                int y1 = h + (dy * (step + 1)) / dx;
+                int lo = (y0 < y1) ? y0 : y1;
+                int hi = (y0 > y1) ? y0 : y1;
+                for (int yy = lo; yy <= hi; yy++) {
+                    uint16_t interp_color = cfg.viz_gradient ? get_gradient_color((float)yy / (float)max_h) : cfg.fg_rgb;
+                    draw_pixel(x + step, base_y - yy, interp_color);
+                }
             }
         }
 
