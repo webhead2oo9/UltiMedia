@@ -107,7 +107,7 @@ Key constants:
 
 - The display is fixed at **320x240, RGB565** — keep rendering within those bounds.
 - Keep memory usage minimal (embedded/emulator context).
-- **New UI elements usually need both responsive layout handling and a non-responsive fallback placement.** Put audio/visual logic in the matching `src/` module.
+- **New UI elements are positioned from `layout.*` and should slot into the layout's degradation priority (transport → title scale → visualizer height).** Put audio/visual logic in the matching `src/` module.
 
 ## Testing your changes
 

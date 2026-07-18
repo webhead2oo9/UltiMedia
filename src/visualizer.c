@@ -429,8 +429,9 @@ static void draw_line_mode(int band_count) {
         if (cfg.viz_peak_hold > 0 && viz_peak_timers[i] > 0) {
             int peak_h = (int)(viz_peaks[i] * max_h);
             if (peak_h >= max_h) peak_h = max_h - 1;
-            draw_pixel(x, base_y - peak_h, 0xF800);
-            draw_pixel(x + 1, base_y - peak_h, 0xF800);
+            uint16_t peak_color = cfg.viz_gradient ? 0xF800 : cfg.fg_rgb;
+            draw_pixel(x, base_y - peak_h, peak_color);
+            draw_pixel(x + 1, base_y - peak_h, peak_color);
         }
     }
 }
@@ -468,10 +469,11 @@ static void draw_vu_meter_mode(void) {
         uint16_t color = cfg.viz_gradient ? get_gradient_color((float)x / (float)meter_w) : cfg.fg_rgb;
         for (int y = 0; y < meter_h; y++) draw_pixel(meter_x + x, left_y + y, color);
     }
+    uint16_t peak_color = cfg.viz_gradient ? 0xF800 : cfg.fg_rgb;
     if (cfg.viz_peak_hold > 0 && viz_peak_timers[0] > 0) {
         int peak_x = (int)(viz_peaks[0] * meter_w);
         if (peak_x >= meter_w) peak_x = meter_w - 1;
-        for (int y = 0; y < meter_h; y++) draw_pixel(meter_x + peak_x, left_y + y, 0xF800);
+        for (int y = 0; y < meter_h; y++) draw_pixel(meter_x + peak_x, left_y + y, peak_color);
     }
 
     // Draw Right meter (skip if too short for two meters)
@@ -486,7 +488,7 @@ static void draw_vu_meter_mode(void) {
         if (cfg.viz_peak_hold > 0 && viz_peak_timers[1] > 0) {
             int peak_x = (int)(viz_peaks[1] * meter_w);
             if (peak_x >= meter_w) peak_x = meter_w - 1;
-            for (int y = 0; y < meter_h; y++) draw_pixel(meter_x + peak_x, right_y + y, 0xF800);
+            for (int y = 0; y < meter_h; y++) draw_pixel(meter_x + peak_x, right_y + y, peak_color);
         }
     }
 }

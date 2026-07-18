@@ -143,7 +143,6 @@ void layout_compute(void) {
     layout.area_w = x1 - x0;
     layout.area_h = y1 - y0;
     layout.is_wide = (layout.area_w * 3) > (layout.area_h * 4);
-    layout.art_reserves_space = cfg.show_art;
 
     layout.art = zero_rect();
     layout.icons = zero_rect();
@@ -191,7 +190,9 @@ void layout_compute(void) {
     int use_transport = cfg.show_ico ? 1 : 0;
 
     int text_scale = use_text ? 2 : 1;
-    int viz_h = use_viz ? viz_min_h : 0;
+    // VU mode needs a 16px interior (two meter rows + labels); the FFT modes
+    // start from the smaller floor and absorb surplus height later.
+    int viz_h = use_viz ? ((cfg.viz_mode == VIZ_MODE_VU) ? vu_compact_h : viz_min_h) : 0;
     int cluster_h = 0;
     int fixed_h = 0;
 
@@ -215,12 +216,6 @@ void layout_compute(void) {
         fixed_h = viz_h + cluster_h;
     }
 
-    if (use_viz && cfg.viz_mode == VIZ_MODE_VU && viz_h > vu_compact_h) {
-        // Keep VU mode compact instead of inflating its internal blank space.
-        fixed_h -= (viz_h - vu_compact_h);
-        viz_h = vu_compact_h;
-    }
-
     const int has_cluster = (use_text + use_bar + use_time) > 0 ? 1 : 0;
     const int groups = use_viz + has_cluster + use_transport;
     const int gap_count = (groups > 1) ? (groups - 1) : 0;
@@ -236,7 +231,9 @@ void layout_compute(void) {
     if (use_viz) {
         if (cfg.viz_mode == VIZ_MODE_VU) {
             if (surplus > 0) y += surplus / 2;
-        } else {
+        } else if (surplus > 0) {
+            // Never add negative surplus: that would drag the panel below the
+            // 12px floor; the overflow guards drop elements instead.
             viz_h += surplus;
         }
     } else if (surplus > 0) {

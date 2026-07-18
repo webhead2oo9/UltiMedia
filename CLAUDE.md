@@ -122,7 +122,7 @@ gcc -shared -O2 -I./deps -I./src -o music_playlist_libretro.dll \
 
 All keys are prefixed `media_`, declared in `config_declare_variables()` and read in `config_update()`. Defaults in parentheses.
 
-- **Visibility (On/Off, all On):** `media_show_art`, `media_show_txt`, `media_show_viz`, `media_show_bar`, `media_show_tim`, `media_show_ico` (transport icon row — additionally auto-hides in responsive mode when the content area is too short)
+- **Visibility (On/Off, all On):** `media_show_art`, `media_show_txt`, `media_show_viz`, `media_show_bar`, `media_show_tim`, `media_show_ico` (transport icon row — additionally auto-hides when the content area is too short)
 - **Layout:** `media_debug_layout` (Off) and usable-region bounds `media_ui_top` (20), `media_ui_bottom` (80), `media_ui_left` (10), `media_ui_right` (90), as percentages
 - **Visualizer:** `media_viz_mode` (`Bars` | `VU Meter` | `Dots` | `Line`; legacy `FFT EQ` maps to `Bars`), `media_viz_bands` (40; presets 40/20), `media_viz_gradient` (On), `media_viz_peak_hold` (30)
 - **Track text:** `media_use_filename` — `Show ID` (metadata) | `Show filename with extension` | `Show Filename without extension`
@@ -145,7 +145,7 @@ Input descriptors for these are registered via `RETRO_ENVIRONMENT_SET_INPUT_DESC
 1. Put audio/visual logic in the matching `src/` module.
 2. Validate with `python3 tests/run_tests.py` first; for changes that touch runtime UX, also walk [`tests/SMOKE_CHECKLIST.md`](tests/SMOKE_CHECKLIST.md) in a frontend.
 3. Respect the 320×240 / RGB565 / minimal-memory constraints.
-4. Handle both responsive and non-responsive placement for new UI elements.
+4. Position new UI elements from `layout.*` and slot them into the degradation priority (transport → title scale → viz height).
 5. Keep `CLAUDE.md`, `CONTRIBUTING.md`, and `music_playlist_libretro.info` consistent with what the code actually does.
 
 **Automation boundary:** the repo has GitHub Actions that can run Claude on GitHub events (`.github/workflows/claude.yml`). For local work, do **not** auto-branch, push, open PRs, or merge unless the task explicitly asks for it.

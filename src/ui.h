@@ -17,8 +17,7 @@ typedef struct {
     int *scroll_x;
 } UiFrame;
 
-// Compose one full frame (background, art, visualizer, text, bar, transport)
-// for both the responsive and the manual-offset layout paths.
+// Compose one full frame: background, art, visualizer, text, bar, transport.
 void ui_draw(UiFrame *frame);
 
 // Restart the marquee hold after a track change or state restore.

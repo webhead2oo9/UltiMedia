@@ -1138,7 +1138,8 @@ bool retro_unserialize(const void *d, size_t s) {
     metadata_load(tracks[current_idx], m3u_base_path, cfg.track_text_mode);
     is_paused = state->is_paused != 0;
     is_shuffle = state->is_shuffle != 0;
-    int min_scroll_x = -((int)strlen(display_str) * GLYPH_WIDTH);
+    int restored_scale = (layout.text_scale > 0) ? layout.text_scale : 1;
+    int min_scroll_x = -((int)strlen(display_str) * GLYPH_WIDTH * restored_scale);
     scroll_x = state->scroll_x;
     if (scroll_x < min_scroll_x || scroll_x > FB_WIDTH) scroll_x = FB_WIDTH;
     ff_rw_icon_timer = state->ff_rw_icon_timer;

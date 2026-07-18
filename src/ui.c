@@ -153,15 +153,22 @@ static void ui_update_marquee(int *scroll_x, int text_w, int region_x, int regio
     if (*scroll_x == min_x) marquee_hold = MARQUEE_HOLD_FRAMES;
 }
 
+// Outline 1px outside the rect so the overlay never overwrites the pixels
+// it is annotating (an on-rect outline eats the top row of 8x8 glyphs).
+static void debug_box(int x, int y, int w, int h, uint16_t color) {
+    if (w <= 0 || h <= 0) return;
+    draw_rect_outline(x - 1, y - 1, w + 2, h + 2, color);
+}
+
 static void ui_draw_debug_overlay(void) {
-    draw_rect_outline(layout.area_x, layout.area_y, layout.area_w, layout.area_h, 0x07FF);
-    draw_rect_outline(layout.content_x, layout.content_y, layout.content_w, layout.content_h, 0x07E0);
-    draw_rect_outline(layout.art.x, layout.art.y, layout.art.w, layout.art.h, 0xFFE0);
-    draw_rect_outline(layout.icons.x, layout.icons.y, layout.icons.w, layout.icons.h, 0xFD20);
-    draw_rect_outline(layout.text.x, layout.text.y, layout.text.w, layout.text.h, 0xF81F);
-    draw_rect_outline(layout.viz.x, layout.viz.y, layout.viz.w, layout.viz.h, 0xF800);
-    draw_rect_outline(layout.bar.x, layout.bar.y, layout.bar.w, layout.bar.h, 0xFFFF);
-    draw_rect_outline(layout.time.x, layout.time.y, layout.time.w, layout.time.h, 0x001F);
+    debug_box(layout.area_x, layout.area_y, layout.area_w, layout.area_h, 0x07FF);
+    debug_box(layout.content_x, layout.content_y, layout.content_w, layout.content_h, 0x07E0);
+    debug_box(layout.art.x, layout.art.y, layout.art.w, layout.art.h, 0xFFE0);
+    debug_box(layout.icons.x, layout.icons.y, layout.icons.w, layout.icons.h, 0xFD20);
+    debug_box(layout.text.x, layout.text.y, layout.text.w, layout.text.h, 0xF81F);
+    debug_box(layout.viz.x, layout.viz.y, layout.viz.w, layout.viz.h, 0xF800);
+    debug_box(layout.bar.x, layout.bar.y, layout.bar.w, layout.bar.h, 0xFFFF);
+    debug_box(layout.time.x, layout.time.y, layout.time.w, layout.time.h, 0x001F);
 }
 
 static void ui_draw_transport(const UiFrame *f, const UiPalette *pal) {

@@ -13,7 +13,6 @@ typedef struct {
 
     // Album art region. Zero-sized when art does not reserve space.
     Rect art;
-    bool art_reserves_space;
 
     // Remaining content area after art placement.
     int content_x, content_y, content_w, content_h;
