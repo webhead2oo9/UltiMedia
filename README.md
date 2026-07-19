@@ -36,14 +36,14 @@ This keeps EmuVR/RetroArch from handing images or media to the built-in viewers 
 - Read `M3U` playlists (UTF-8 and UTF-16)
 - Parse metadata from MP3, OGG, and FLAC tags
 - Show album art from nearby image files or embedded artwork
-- Display 4 visualizer modes: `Bars`, `VU Meter`, `Dots`, `Line`
+- Display 7 visualizer modes: `Bars`, `VU Meter`, `Dots`, `Line`, `Scope`, `Mirror`, `Horizon`
 - Auto-arrange UI with responsive layout bounds
 - Preserve playback, pause, and shuffle state through LibRetro save states
 
 ## Controls
 
 - `B`: Pause/Play
-- `X`: Cycle visualizer mode (`Bars -> VU Meter -> Dots -> Line`)
+- `X`: Cycle visualizer mode (`Bars -> VU Meter -> Dots -> Line -> Scope -> Mirror -> Horizon`)
 - `L` / `R`: Previous / Next track
 - `LEFT` / `RIGHT`: Seek backward / forward by about 3 seconds
 - `Y`: Toggle shuffle
@@ -69,11 +69,11 @@ When a track loads, art is searched in this order:
 - Show Visualizer
 - Show Progress Bar
 - Show Time
-- Show Icons
+- Show Transport Icons (also auto-hides on its own when the layout gets too short)
 
 ### Visualizer
 
-- Viz Mode: `Bars`, `VU Meter`, `Dots`, `Line`
+- Viz Mode: `Bars`, `VU Meter`, `Dots`, `Line`, `Scope`, `Mirror`, `Horizon`
 - Viz Bands: `20` or `40`
 - Viz Gradient: `On/Off`
 - Peak Hold presets: `0`, `15`, `30`, `45`, `60` (default `30`)
@@ -85,21 +85,12 @@ When a track loads, art is searched in this order:
   - `Show filename with extension`
   - `Show Filename without extension`
 
-### Responsive Layout
+### Layout
 
-- Responsive Layout: `On/Off` (default `On`)
+- Resolution: `320x240` (default), `640x480`, `960x720`, or `1280x960`
 - UI Top / Bottom / Left / Right (%): defines the usable screen region
 - Debug Layout Bounds: `Off/On`
-  - Draws colored layout boxes to help tune responsive positioning
-
-### Manual Y Offsets (mainly for non-responsive mode)
-
-- Art Y
-- Text Y
-- Viz Y
-- Bar Y
-- Time Y
-- Icon Y
+  - Draws colored layout boxes to help tune positioning
 
 ### Colors
 
@@ -161,7 +152,7 @@ If you prefer working inside an MSYS2 shell directly, open the `UCRT64` shell. M
 python3 tests/run_tests.py
 gcc -shared -O2 -I./deps -I./src -o music_playlist_libretro.dll \
   src/core.c src/audio.c src/audio_codecs.c src/video.c src/visualizer.c \
-  src/metadata.c src/image_codecs.c src/config.c src/layout.c -lm
+  src/metadata.c src/image_codecs.c src/config.c src/layout.c src/ui.c -lm
 ```
 
 ### CI Coverage

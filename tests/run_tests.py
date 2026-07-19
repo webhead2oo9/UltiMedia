@@ -289,6 +289,7 @@ def build_harness(repo_root: Path, temp_dir: Path, compiler: str) -> Path:
         "src/image_codecs.c",
         "src/config.c",
         "src/layout.c",
+        "src/ui.c",
     ]
     extra_cflags = split_cflags(os.environ.get("CFLAGS", ""))
     command = [

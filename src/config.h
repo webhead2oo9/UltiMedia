@@ -15,16 +15,19 @@ typedef enum {
     VIZ_MODE_DOTS = 1,
     VIZ_MODE_LINE = 2,
     VIZ_MODE_VU = 3,
-    VIZ_MODE_FFT_EQ_LEGACY = 4
+    VIZ_MODE_FFT_EQ_LEGACY = 4,
+    VIZ_MODE_SCOPE = 5,
+    VIZ_MODE_MIRROR = 6,
+    VIZ_MODE_HORIZON = 7
 } VizMode;
 
 // Configuration structure for all UI and display options
 typedef struct {
     uint16_t bg_rgb, fg_rgb;
-    int art_y, txt_y, viz_y, bar_y, tim_y, ico_y;
+    int ui_scale;   // resolution scale: framebuffer = 320x240 * ui_scale (1-4)
     int ui_top, ui_bottom, ui_left, ui_right;
     bool show_art, show_txt, show_viz, show_bar, show_tim, show_ico;
-    bool responsive, debug_layout;
+    bool debug_layout;
     int viz_bands, viz_mode, viz_peak_hold;
     bool viz_gradient;
     TrackTextMode track_text_mode;

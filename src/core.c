@@ -13,6 +13,7 @@
 #include "config.h"
 #include "layout.h"
 #include "video.h"
+#include "ui.h"
 #include "audio.h"
 #include "metadata.h"
 #include "visualizer.h"
@@ -66,10 +67,15 @@ static bool is_shuffle = false;
 // the user changes the core option itself.
 static bool viz_mode_user_override = false;
 static int viz_mode_menu_value = 0;
-static char time_str[32];
 static int ff_rw_icon_timer = 0;
 static int ff_rw_dir = 0;
 static int seek_repeat_cooldown = 0;
+// Frame duration reported by the frontend; stays at the 60fps fallback when
+// the frontend does not support the frame-time callback.
+static retro_usec_t frame_time_usec = 1000000 / 60;
+// A resolution change happened outside retro_run; SET_GEOMETRY is only legal
+// from within retro_run, so the notification is deferred to the next frame.
+static bool geometry_dirty = false;
 static bool config_needs_refresh = true;
 static uint32_t shuffle_seed = 0;
 static uint32_t shuffle_state = 0;
@@ -99,6 +105,20 @@ static size_t serialized_state_size(void);
 static void open_next_track(void);
 static void open_previous_track(void);
 
+static void frame_time_cb(retro_usec_t usec) {
+    frame_time_usec = usec;
+}
+
+// Apply the configured resolution to the framebuffer wherever config is
+// re-read (run/reset/unserialize); the frontend learns about it on the next
+// retro_run via SET_GEOMETRY.
+static void apply_resolution_from_config(void) {
+    int scale = (cfg.ui_scale > 0) ? cfg.ui_scale : 1;
+    if (320 * scale == fb_width) return;
+    video_set_resolution(320 * scale, 240 * scale);
+    geometry_dirty = true;
+}
+
 // Edge-triggered button check: true only on the frame the button goes down.
 // Joypad IDs are < 16, so one uint16_t tracks every button's held state.
 static bool button_pressed(unsigned id) {
@@ -114,7 +134,10 @@ static int next_viz_mode(int mode) {
     if (mode == VIZ_MODE_BARS || mode == VIZ_MODE_FFT_EQ_LEGACY) return VIZ_MODE_VU; // Bars -> VU Meter
     if (mode == VIZ_MODE_VU) return VIZ_MODE_DOTS;                                     // VU Meter -> Dots
     if (mode == VIZ_MODE_DOTS) return VIZ_MODE_LINE;                                   // Dots -> Line
-    return VIZ_MODE_BARS;                                                               // Line/unknown -> Bars
+    if (mode == VIZ_MODE_LINE) return VIZ_MODE_SCOPE;                                  // Line -> Scope
+    if (mode == VIZ_MODE_SCOPE) return VIZ_MODE_MIRROR;                                // Scope -> Mirror
+    if (mode == VIZ_MODE_MIRROR) return VIZ_MODE_HORIZON;                              // Mirror -> Horizon
+    return VIZ_MODE_BARS;                                                               // Horizon/unknown -> Bars
 }
 
 static int is_valid_viz_mode(int mode) {
@@ -122,31 +145,14 @@ static int is_valid_viz_mode(int mode) {
            mode == VIZ_MODE_FFT_EQ_LEGACY ||
            mode == VIZ_MODE_VU ||
            mode == VIZ_MODE_DOTS ||
-           mode == VIZ_MODE_LINE;
+           mode == VIZ_MODE_LINE ||
+           mode == VIZ_MODE_SCOPE ||
+           mode == VIZ_MODE_MIRROR ||
+           mode == VIZ_MODE_HORIZON;
 }
 
 static int normalize_viz_mode(int mode) {
     return (mode == VIZ_MODE_FFT_EQ_LEGACY) ? VIZ_MODE_BARS : mode;
-}
-
-static void draw_rect_outline(int x, int y, int w, int h, uint16_t color) {
-    if (w <= 0 || h <= 0) return;
-    int x2 = x + w - 1;
-    int y2 = y + h - 1;
-    for (int px = x; px <= x2; px++) {
-        draw_pixel(px, y, color);
-        draw_pixel(px, y2, color);
-    }
-    for (int py = y; py <= y2; py++) {
-        draw_pixel(x, py, color);
-        draw_pixel(x2, py, color);
-    }
-}
-
-static int playback_progress_width(int width) {
-    if (width <= 0 || total_frames == 0 || cur_frame == 0) return 0;
-    if (cur_frame >= total_frames) return width;
-    return (int)(((double)cur_frame / (double)total_frames) * (double)width);
 }
 
 // Helper function for case-insensitive string comparison
@@ -624,18 +630,18 @@ static void open_previous_track(void) {
 }
 
 static void reset_runtime_state(bool preserve_shuffle_mode) {
-    scroll_x = FB_WIDTH;
+    scroll_x = fb_width;
     held_buttons = 0;
     viz_mode_user_override = false;
     is_paused = false;
     if (!preserve_shuffle_mode) is_shuffle = false;
-    time_str[0] = '\0';
     ff_rw_icon_timer = 0;
     ff_rw_dir = 0;
     seek_repeat_cooldown = 0;
     config_needs_refresh = true;
     clear_shuffle_state();
     viz_reset_state();
+    ui_reset_marquee();
 }
 
 // Tear down the whole playback session: decoder, artwork, playlist, and
@@ -722,7 +728,8 @@ static bool open_track(int idx) {
 
     // Load metadata and album art
     metadata_load(p, m3u_base_path, cfg.track_text_mode);
-    scroll_x = cfg.responsive ? (layout.content_x + layout.content_w) : FB_WIDTH;
+    scroll_x = layout.text.x;
+    ui_reset_marquee();
     return true;
 }
 
@@ -744,21 +751,37 @@ static void apply_config_update(void) {
 
 static void refresh_config_and_layout(void) {
     TrackTextMode old_track_text_mode = cfg.track_text_mode;
+    bool old_show_txt = cfg.show_txt;
+    int old_ui_scale = cfg.ui_scale;
     apply_config_update();
-    if (cfg.responsive)
-        layout_compute();
 
-    if (old_track_text_mode != cfg.track_text_mode &&
-        track_count > 0 &&
+    apply_resolution_from_config();
+    layout_compute();
+
+    if (track_count > 0 &&
         current_idx >= 0 &&
         current_idx < track_count &&
         tracks[current_idx]) {
-        metadata_refresh_display(tracks[current_idx], cfg.track_text_mode);
-        scroll_x = cfg.responsive ? (layout.content_x + layout.content_w) : FB_WIDTH;
+        if (old_track_text_mode != cfg.track_text_mode)
+            metadata_refresh_display(tracks[current_idx], cfg.track_text_mode);
+        // Restart the marquee when the text mode changes, the title is
+        // re-enabled, or the resolution scale changes, so it never resumes
+        // from a stale or wrong-scale mid-scroll position.
+        if (old_track_text_mode != cfg.track_text_mode ||
+            (cfg.show_txt && !old_show_txt) ||
+            cfg.ui_scale != old_ui_scale) {
+            scroll_x = layout.text.x;
+            ui_reset_marquee();
+        }
     }
 }
 
 void retro_run(void) {
+    float dt = (float)frame_time_usec / 1000000.0f;
+    if (dt < 0.001f || dt > 0.1f) dt = 1.0f / 60.0f;  // ignore stalls/garbage
+    ui_set_frame_dt(dt);
+    viz_set_frame_dt(dt);
+
     if (config_needs_refresh) {
         refresh_config_and_layout();
         config_needs_refresh = false;
@@ -767,6 +790,19 @@ void retro_run(void) {
         if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated)
             refresh_config_and_layout();
     }
+
+    if (geometry_dirty) {
+        // Within the pre-declared max, SET_GEOMETRY changes size without a
+        // driver reinit (which would tear down EmuVR's shared-texture pipe).
+        struct retro_game_geometry geom = {
+            (unsigned)fb_width, (unsigned)fb_height,
+            FB_MAX_WIDTH, FB_MAX_HEIGHT,
+            4.0f / 3.0f
+        };
+        environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &geom);
+        geometry_dirty = false;
+    }
+
     input_poll_cb();
 
     // 1. Handle Inputs
@@ -815,10 +851,11 @@ void retro_run(void) {
     if (button_pressed(RETRO_DEVICE_ID_JOYPAD_X)) {
         cfg.viz_mode = next_viz_mode(cfg.viz_mode);
         viz_mode_user_override = true;
-        if (cfg.responsive) layout_compute();
+        layout_compute();
     }
     if (button_pressed(RETRO_DEVICE_ID_JOYPAD_R)) open_next_track();
     if (button_pressed(RETRO_DEVICE_ID_JOYPAD_L)) open_previous_track();
+    if (ff_rw_icon_timer > 0) ff_rw_icon_timer--;
 
     // 2. Audio Core
     int16_t out_buf[SAMPLES_PER_FRAME * 2] = {0};
@@ -836,102 +873,19 @@ void retro_run(void) {
     audio_batch_cb(out_buf, SAMPLES_PER_FRAME);
 
     // 4. Rendering Section
-    video_clear(cfg.bg_rgb);
-
-    if (cfg.responsive) {
-        if (cfg.show_art && art_buffer && layout.art.w > 0 && layout.art.h > 0) {
-            for (int y = 0; y < layout.art.h; y++) {
-                int src_y = y * art_h_src / layout.art.h;
-                for (int x = 0; x < layout.art.w; x++) {
-                    int src_x = x * art_w_src / layout.art.w;
-                    draw_pixel(layout.art.x + x, layout.art.y + y, art_buffer[src_y * art_w_src + src_x]);
-                }
-            }
-        }
-
-        if (cfg.show_txt && layout.text.w > 0) {
-            int right_edge = layout.text.x + layout.text.w;
-            int text_w = (int)strlen(display_str) * GLYPH_WIDTH;
-            int left_bound = layout.text.x - text_w;
-            if (scroll_x > right_edge || scroll_x < left_bound)
-                scroll_x = right_edge;
-            draw_text_clipped(scroll_x, layout.text.y, display_str, cfg.fg_rgb, layout.text.x, layout.text.w);
-            scroll_x--;
-        }
-
-        if (cfg.show_viz) {
-            viz_draw();
-        }
-
-        if (cfg.show_bar && total_frames > 0 && layout.bar.w > 0) {
-            int filled_w = playback_progress_width(layout.bar.w);
-            for (int w = 0; w < layout.bar.w; w++) draw_pixel(layout.bar.x + w, layout.bar.y, cfg.bg_rgb | 0x18C3);
-            for (int w = 0; w < filled_w; w++) draw_pixel(layout.bar.x + w, layout.bar.y, cfg.fg_rgb);
-        }
-
-        if (cfg.show_tim && layout.time.w > 0) {
-            int sec = source_rate ? (int)(cur_frame / source_rate) : 0;
-            snprintf(time_str, sizeof(time_str), "%02d:%02d", sec / 60, sec % 60);
-            int time_x = layout.time.x + (layout.time.w - ((int)strlen(time_str) * GLYPH_WIDTH)) / 2;
-            draw_text(time_x, layout.time.y, time_str, cfg.fg_rgb);
-        }
-
-        if (cfg.show_ico && layout.icons.w > 0 && layout.icons.h > 0) {
-            if (is_shuffle) draw_text(layout.icon_shuffle_x, layout.icons.y, "SHUF", cfg.fg_rgb);
-            if (is_paused) draw_text(layout.icon_pause_x, layout.icons.y, "||", cfg.fg_rgb);
-            if (ff_rw_icon_timer > 0) {
-                draw_text(layout.icon_seek_x, layout.icons.y, (ff_rw_dir > 0) ? ">>" : "<<", cfg.fg_rgb);
-                ff_rw_icon_timer--;
-            }
-        }
-
-        if (cfg.debug_layout) {
-            // Overlay layout boxes for responsive tuning/debugging.
-            draw_rect_outline(layout.area_x, layout.area_y, layout.area_w, layout.area_h, 0x07FF);
-            draw_rect_outline(layout.content_x, layout.content_y, layout.content_w, layout.content_h, 0x07E0);
-            draw_rect_outline(layout.art.x, layout.art.y, layout.art.w, layout.art.h, 0xFFE0);
-            draw_rect_outline(layout.icons.x, layout.icons.y, layout.icons.w, layout.icons.h, 0xFD20);
-            draw_rect_outline(layout.text.x, layout.text.y, layout.text.w, layout.text.h, 0xF81F);
-            draw_rect_outline(layout.viz.x, layout.viz.y, layout.viz.w, layout.viz.h, 0xF800);
-            draw_rect_outline(layout.bar.x, layout.bar.y, layout.bar.w, layout.bar.h, 0xFFFF);
-            draw_rect_outline(layout.time.x, layout.time.y, layout.time.w, layout.time.h, 0x001F);
-        }
-    } else {
-        if (cfg.show_art && art_buffer) {
-            for (int y = 0; y < 80; y++) {
-                for (int x = 0; x < 80; x++) {
-                    draw_pixel(120 + x, cfg.art_y + y, art_buffer[(y * art_h_src / 80) * art_w_src + (x * art_w_src / 80)]);
-                }
-            }
-        }
-        if (cfg.show_txt) {
-            draw_text(scroll_x, cfg.txt_y, display_str, cfg.fg_rgb);
-            scroll_x--;
-            if (scroll_x < -((int)strlen(display_str) * GLYPH_WIDTH)) scroll_x = FB_WIDTH;
-        }
-        if (cfg.show_viz) {
-            viz_draw();
-        }
-        if (cfg.show_bar && total_frames > 0) {
-            int filled_w = playback_progress_width(200);
-            for (int w = 0; w < 200; w++) draw_pixel(60 + w, cfg.bar_y, cfg.bg_rgb | 0x18C3);
-            for (int w = 0; w < filled_w; w++) draw_pixel(60 + w, cfg.bar_y, cfg.fg_rgb);
-        }
-        if (cfg.show_tim) {
-            int sec = source_rate ? (int)(cur_frame / source_rate) : 0;
-            snprintf(time_str, sizeof(time_str), "%02d:%02d", sec / 60, sec % 60);
-            draw_text(140, cfg.tim_y, time_str, cfg.fg_rgb);
-        }
-        if (cfg.show_ico) {
-            if (is_shuffle) draw_text(20, cfg.ico_y, "SHUF", cfg.fg_rgb);
-            if (is_paused) draw_text(280, cfg.ico_y, "||", cfg.fg_rgb);
-            if (ff_rw_icon_timer > 0) {
-                draw_text(60, cfg.ico_y, (ff_rw_dir > 0) ? ">>" : "<<", cfg.fg_rgb);
-                ff_rw_icon_timer--;
-            }
-        }
-    }
-    video_cb(framebuffer, FB_WIDTH, FB_HEIGHT, FB_WIDTH * 2);
+    UiFrame frame = {
+        .paused = is_paused,
+        .shuffle = is_shuffle,
+        .seek_dir = (ff_rw_icon_timer > 0) ? ff_rw_dir : 0,
+        .track_index = current_idx,
+        .track_count = track_count,
+        .cur_frame = cur_frame,
+        .total_frames = total_frames,
+        .source_rate = source_rate,
+        .scroll_x = &scroll_x,
+    };
+    ui_draw(&frame);
+    video_cb(framebuffer, fb_width, fb_height, fb_width * 2);
 }
 
 void retro_set_environment(retro_environment_t cb) {
@@ -1043,10 +997,16 @@ bool retro_load_game(const struct retro_game_info *g) {
         return false;
     }
 
+    struct retro_frame_time_callback ftcb = { frame_time_cb, 1000000 / 60 };
+    environ_cb(RETRO_ENVIRONMENT_SET_FRAME_TIME_CALLBACK, &ftcb);
+
     start_shuffle_cycle(generate_shuffle_seed());
     apply_config_update();
-    if (cfg.responsive)
-        layout_compute();
+    // The frontend queries retro_get_system_av_info after load, so the base
+    // size is declared there; no SET_GEOMETRY needed for this change.
+    video_set_resolution(320 * cfg.ui_scale, 240 * cfg.ui_scale);
+    geometry_dirty = false;
+    layout_compute();
 
     bool opened = open_track(0);
     if (!opened) {
@@ -1096,10 +1056,10 @@ void retro_get_system_info(struct retro_system_info *i) {
 void retro_get_system_av_info(struct retro_system_av_info *info) {
     info->timing.fps = 60.0;
     info->timing.sample_rate = (double)OUT_RATE;
-    info->geometry.base_width = FB_WIDTH;
-    info->geometry.base_height = FB_HEIGHT;
-    info->geometry.max_width = FB_WIDTH;
-    info->geometry.max_height = FB_HEIGHT;
+    info->geometry.base_width = fb_width;
+    info->geometry.base_height = fb_height;
+    info->geometry.max_width = FB_MAX_WIDTH;
+    info->geometry.max_height = FB_MAX_HEIGHT;
     info->geometry.aspect_ratio = 4.0 / 3.0;
 }
 void retro_set_audio_sample(retro_audio_sample_t cb) { (void)cb; }
@@ -1229,7 +1189,8 @@ bool retro_unserialize(const void *d, size_t s) {
 
     apply_config_update();
     cfg.viz_mode = normalize_viz_mode(state->viz_mode);
-    if (cfg.responsive) layout_compute();
+    apply_resolution_from_config();
+    layout_compute();
 
     reset_runtime_state(state->is_shuffle != 0);
     viz_mode_user_override = (cfg.viz_mode != viz_mode_menu_value);
@@ -1240,9 +1201,11 @@ bool retro_unserialize(const void *d, size_t s) {
     metadata_load(tracks[current_idx], m3u_base_path, cfg.track_text_mode);
     is_paused = state->is_paused != 0;
     is_shuffle = state->is_shuffle != 0;
-    int min_scroll_x = -((int)strlen(display_str) * GLYPH_WIDTH);
+    int restored_scale = ((layout.text_scale > 0) ? layout.text_scale : 1)
+                       * ((cfg.ui_scale > 0) ? cfg.ui_scale : 1);
+    int min_scroll_x = -((int)strlen(display_str) * GLYPH_WIDTH * restored_scale);
     scroll_x = state->scroll_x;
-    if (scroll_x < min_scroll_x || scroll_x > FB_WIDTH) scroll_x = FB_WIDTH;
+    if (scroll_x < min_scroll_x || scroll_x > fb_width) scroll_x = fb_width;
     ff_rw_icon_timer = state->ff_rw_icon_timer;
     if (ff_rw_icon_timer < 0) ff_rw_icon_timer = 0;
     if (ff_rw_icon_timer > SEEK_ICON_FRAMES) ff_rw_icon_timer = SEEK_ICON_FRAMES;

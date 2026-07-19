@@ -17,6 +17,6 @@
 ## Checklist
 
 - [ ] Code follows the C99 / 4-space style in [`CONTRIBUTING.md`](../CONTRIBUTING.md)
-- [ ] Changes respect the 320x240 RGB565 display constraint
-- [ ] New UI elements handle both responsive layout and non-responsive fallback placement
+- [ ] Changes respect the logical 320x240 RGB565 layout and multiply pixel constants by the resolution scale
+- [ ] New UI elements are positioned from `layout.*` and respect the degradation priority (transport → title scale → viz height)
 - [ ] Documentation (README / core options) updated if behavior changed

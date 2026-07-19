@@ -80,14 +80,13 @@ void config_update(retro_environment_t environ_cb) {
     cfg.show_bar = get_bool_var(environ_cb, "media_show_bar", true);
     cfg.show_tim = get_bool_var(environ_cb, "media_show_tim", true);
     cfg.show_ico = get_bool_var(environ_cb, "media_show_ico", true);
-    cfg.responsive = get_bool_var(environ_cb, "media_responsive", true);
+    const char *res_value = get_var_value(environ_cb, "media_resolution");
+    if (res_value && !strcmp(res_value, "1280x960")) cfg.ui_scale = 4;
+    else if (res_value && !strcmp(res_value, "960x720")) cfg.ui_scale = 3;
+    else if (res_value && !strcmp(res_value, "640x480")) cfg.ui_scale = 2;
+    else cfg.ui_scale = 1;
+
     cfg.debug_layout = get_bool_var(environ_cb, "media_debug_layout", false);
-    cfg.art_y = get_int_var(environ_cb, "media_art_y", 40, -4096, 4096);
-    cfg.txt_y = get_int_var(environ_cb, "media_txt_y", 150, -4096, 4096);
-    cfg.viz_y = get_int_var(environ_cb, "media_viz_y", 140, -4096, 4096);
-    cfg.bar_y = get_int_var(environ_cb, "media_bar_y", 180, -4096, 4096);
-    cfg.tim_y = get_int_var(environ_cb, "media_tim_y", 190, -4096, 4096);
-    cfg.ico_y = get_int_var(environ_cb, "media_ico_y", 20, -4096, 4096);
     cfg.ui_top = get_int_var(environ_cb, "media_ui_top", 20, 0, 100);
     cfg.ui_bottom = get_int_var(environ_cb, "media_ui_bottom", 80, 0, 100);
     cfg.ui_left = get_int_var(environ_cb, "media_ui_left", 10, 0, 100);
@@ -104,6 +103,9 @@ void config_update(retro_environment_t environ_cb) {
         else if (!strcmp(viz_mode_value, "VU Meter")) cfg.viz_mode = VIZ_MODE_VU;
         else if (!strcmp(viz_mode_value, "Dots")) cfg.viz_mode = VIZ_MODE_DOTS;
         else if (!strcmp(viz_mode_value, "Line")) cfg.viz_mode = VIZ_MODE_LINE;
+        else if (!strcmp(viz_mode_value, "Scope")) cfg.viz_mode = VIZ_MODE_SCOPE;
+        else if (!strcmp(viz_mode_value, "Mirror")) cfg.viz_mode = VIZ_MODE_MIRROR;
+        else if (!strcmp(viz_mode_value, "Horizon")) cfg.viz_mode = VIZ_MODE_HORIZON;
         else cfg.viz_mode = VIZ_MODE_BARS;
     } else {
         cfg.viz_mode = VIZ_MODE_BARS;
@@ -121,18 +123,15 @@ void config_declare_variables(retro_environment_t cb) {
         { "media_fg_r", "FG Red; 0|32|64|128|255" }, { "media_fg_g", "FG Green; 255|0|32|64|128" }, { "media_fg_b", "FG Blue; 0|32|64|128|255" },
         { "media_show_art", "Show Art; On|Off" }, { "media_show_txt", "Show Scroll Text; On|Off" },
         { "media_show_viz", "Show Visualizer; On|Off" }, { "media_show_bar", "Show Progress Bar; On|Off" },
-        { "media_show_tim", "Show Time; On|Off" }, { "media_show_ico", "Show Icons; On|Off" },
-        { "media_responsive", "Responsive Layout; On|Off" },
+        { "media_show_tim", "Show Time; On|Off" }, { "media_show_ico", "Show Transport Icons; On|Off" },
+        { "media_resolution", "Resolution; 320x240|640x480|960x720|1280x960" },
         { "media_debug_layout", "Debug Layout Bounds; Off|On" },
         { "media_ui_top", "UI Top %; 20|0|10|30|40|50" },
         { "media_ui_bottom", "UI Bottom %; 80|50|60|70|90|100" },
         { "media_ui_left", "UI Left %; 10|0|20|30" },
         { "media_ui_right", "UI Right %; 90|70|80|100" },
-        { "media_art_y", "Art Y; 40|0|80|120" }, { "media_txt_y", "Text Y; 150|20|120|200" },
-        { "media_viz_y", "Viz Y; 140|80|200" }, { "media_bar_y", "Bar Y; 180|100|210" },
-        { "media_tim_y", "Time Y; 190|110|220" }, { "media_ico_y", "Icon Y; 20|50|200" },
         { "media_viz_bands", "Viz Bands; 40|20" },
-        { "media_viz_mode", "Viz Mode; Bars|VU Meter|Dots|Line" },
+        { "media_viz_mode", "Viz Mode; Bars|VU Meter|Dots|Line|Scope|Mirror|Horizon" },
         { "media_viz_gradient", "Viz Gradient; On|Off" },
         { "media_viz_peak_hold", "Peak Hold; 30|0|15|45|60" },
         { "media_use_filename", "Track Text Mode; Show ID|Show filename with extension|Show Filename without extension" },
