@@ -9,6 +9,8 @@
 
 A LibRetro audio player core for RetroArch and EmuVR that plays `.m3u` playlists and standalone audio files with album art, scrolling track text, responsive layout, shuffle, and save-state-aware playback.
 
+UltiMedia is based on the original Music Playlist Core created by **KrisRetro**, with subsequent development and maintenance by **webhead**.
+
 ## Quick Start
 
 1. Download `music_playlist_libretro.dll` from [Releases](../../releases)
@@ -168,9 +170,15 @@ Pushes to `main` also publish the built DLL as a GitHub release artifact.
 
 For manual frontend verification, use [tests/SMOKE_CHECKLIST.md](tests/SMOKE_CHECKLIST.md).
 
+## Project Status
+
+UltiMedia is feature-complete and is no longer under active development. The current release will remain available, and this repository is preserved as a reference for users and developers.
+
+Anyone interested in continuing the project is welcome to fork it under the terms of the MIT License.
+
 ## Contributing
 
-Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, the build and test workflow, and code style. Please also review the [Code of Conduct](CODE_OF_CONDUCT.md). To report a security issue, see [SECURITY.md](SECURITY.md).
+This repository is no longer accepting issues or pull requests. Development may continue through community forks.
 
 ## License
 
