@@ -66,6 +66,7 @@ typedef ptrdiff_t GLsizeiptr;
 #define GL_TEXTURE0 0x84C0
 #define GL_ARRAY_BUFFER 0x8892
 #define GL_DYNAMIC_DRAW 0x88E8
+#define GL_PIXEL_UNPACK_BUFFER 0x88EC
 #define GL_FRAGMENT_SHADER 0x8B30
 #define GL_VERTEX_SHADER 0x8B31
 #define GL_COMPILE_STATUS 0x8B81
@@ -353,6 +354,7 @@ static bool build_resources(void) {
     // Allocate the scene texture at the declared max once; per-frame uploads
     // then touch only the active region, and resolution changes need no
     // realloc.
+    glBindBuffer_(GL_PIXEL_UNPACK_BUFFER, 0);
     glGenTextures_(1, &gl_texture);
     glBindTexture_(GL_TEXTURE_2D, gl_texture);
     glTexParameteri_(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -504,6 +506,7 @@ bool render_gl_frame(void) {
     // anything the frontend left behind; pin every knob the upload reads.
     glActiveTexture_(GL_TEXTURE0);
     glBindTexture_(GL_TEXTURE_2D, gl_texture);
+    glBindBuffer_(GL_PIXEL_UNPACK_BUFFER, 0);
     glPixelStorei_(GL_UNPACK_ALIGNMENT, 2);
     glPixelStorei_(GL_UNPACK_ROW_LENGTH, 0);
     glPixelStorei_(GL_UNPACK_SKIP_ROWS, 0);

@@ -23,6 +23,7 @@
 #define MAX_JOYPAD_IDS 32
 #define MAX_PATH_LEN 1024
 #define EXPECTED_LIBRARY_NAME "UltiMedia UGC"
+#define STUB_GL_PIXEL_UNPACK_BUFFER 0x88EC
 
 typedef struct {
     const char *key;
@@ -57,6 +58,11 @@ static bool g_gl_stub_break_glow = false;      // glow entry points unresolvable
 static bool g_gl_stub_fbo_incomplete = false;  // glow FBOs never complete
 static unsigned int g_gl_stub_next_id = 1;     // unique names from the Gen stubs
 static int g_gl_stub_draw_calls = 0;
+static unsigned int g_gl_stub_pixel_unpack_buffer = 0;
+static int g_gl_stub_tex_image_calls = 0;
+static int g_gl_stub_tex_sub_image_calls = 0;
+static int g_gl_stub_tex_image_with_pbo = 0;
+static int g_gl_stub_tex_sub_image_with_pbo = 0;
 static char g_video_frame_unset_sentinel;
 static const void *g_last_video_frame = NULL;
 
@@ -80,8 +86,18 @@ static void STUB_GLCALL stub_glGenTextures(int n, unsigned int *textures) { for 
 static void STUB_GLCALL stub_glDeleteTextures(int n, const unsigned int *textures) { (void)n; (void)textures; }
 static void STUB_GLCALL stub_glBindTexture(unsigned int target, unsigned int texture) { (void)target; (void)texture; }
 static void STUB_GLCALL stub_glTexParameteri(unsigned int target, unsigned int pname, int param) { (void)target; (void)pname; (void)param; }
-static void STUB_GLCALL stub_glTexImage2D(unsigned int target, int level, int internalformat, int w, int h, int border, unsigned int format, unsigned int type, const void *pixels) { (void)target; (void)level; (void)internalformat; (void)w; (void)h; (void)border; (void)format; (void)type; (void)pixels; }
-static void STUB_GLCALL stub_glTexSubImage2D(unsigned int target, int level, int x, int y, int w, int h, unsigned int format, unsigned int type, const void *pixels) { (void)target; (void)level; (void)x; (void)y; (void)w; (void)h; (void)format; (void)type; (void)pixels; }
+static void STUB_GLCALL stub_glTexImage2D(unsigned int target, int level, int internalformat, int w, int h, int border, unsigned int format, unsigned int type, const void *pixels) {
+    (void)target; (void)level; (void)internalformat; (void)w; (void)h;
+    (void)border; (void)format; (void)type; (void)pixels;
+    g_gl_stub_tex_image_calls++;
+    if (g_gl_stub_pixel_unpack_buffer) g_gl_stub_tex_image_with_pbo++;
+}
+static void STUB_GLCALL stub_glTexSubImage2D(unsigned int target, int level, int x, int y, int w, int h, unsigned int format, unsigned int type, const void *pixels) {
+    (void)target; (void)level; (void)x; (void)y; (void)w; (void)h;
+    (void)format; (void)type; (void)pixels;
+    g_gl_stub_tex_sub_image_calls++;
+    if (g_gl_stub_pixel_unpack_buffer) g_gl_stub_tex_sub_image_with_pbo++;
+}
 static void STUB_GLCALL stub_glActiveTexture(unsigned int texture) { (void)texture; }
 static unsigned int STUB_GLCALL stub_glCreateShader(unsigned int type) { (void)type; return 1; }
 static void STUB_GLCALL stub_glShaderSource(unsigned int shader, int count, const char **string, const int *length) { (void)shader; (void)count; (void)string; (void)length; }
@@ -106,7 +122,10 @@ static int STUB_GLCALL stub_glGetUniformLocation(unsigned int program, const cha
 static void STUB_GLCALL stub_glUniform1i(int location, int v0) { (void)location; (void)v0; }
 static void STUB_GLCALL stub_glGenBuffers(int n, unsigned int *buffers) { for (int i = 0; i < n; i++) buffers[i] = g_gl_stub_next_id++; }
 static void STUB_GLCALL stub_glDeleteBuffers(int n, const unsigned int *buffers) { (void)n; (void)buffers; }
-static void STUB_GLCALL stub_glBindBuffer(unsigned int target, unsigned int buffer) { (void)target; (void)buffer; }
+static void STUB_GLCALL stub_glBindBuffer(unsigned int target, unsigned int buffer) {
+    if (target == STUB_GL_PIXEL_UNPACK_BUFFER)
+        g_gl_stub_pixel_unpack_buffer = buffer;
+}
 static void STUB_GLCALL stub_glBufferData(unsigned int target, ptrdiff_t size, const void *data, unsigned int usage) { (void)target; (void)size; (void)data; (void)usage; }
 static void STUB_GLCALL stub_glEnableVertexAttribArray(unsigned int index) { (void)index; }
 static void STUB_GLCALL stub_glDisableVertexAttribArray(unsigned int index) { (void)index; }
@@ -1339,12 +1358,25 @@ static bool test_gl_negotiation_lifecycle_and_fallback(TestContext *ctx) {
                       "gl_lifecycle: negotiated GL without a context must dupe (NULL), not submit a CPU frame"))
         return false;
 
-    // 3) context_reset arrives: hardware frames, full bloom pipeline
-    // (bright-pass + two blur passes + scene blit + glow overlay = 5 draws).
+    // 3) context_reset arrives with inherited shared-context PBO state.
+    // Texture allocation and the per-frame CPU upload must both unbind it.
+    g_gl_stub_pixel_unpack_buffer = 41;
+    g_gl_stub_tex_image_calls = 0;
+    g_gl_stub_tex_sub_image_calls = 0;
+    g_gl_stub_tex_image_with_pbo = 0;
+    g_gl_stub_tex_sub_image_with_pbo = 0;
+    // Full bloom: bright-pass + two blur passes + scene blit + glow overlay.
     g_hw_render_cb.context_reset();
+    if (!require_true(g_gl_stub_tex_image_calls > 0 && g_gl_stub_tex_image_with_pbo == 0,
+                      "gl_lifecycle: texture allocation must unbind inherited pixel-unpack buffers"))
+        return false;
+    g_gl_stub_pixel_unpack_buffer = 42;
     g_last_video_frame = &g_video_frame_unset_sentinel;
     g_gl_stub_draw_calls = 0;
     run_frames(1);
+    if (!require_true(g_gl_stub_tex_sub_image_calls > 0 && g_gl_stub_tex_sub_image_with_pbo == 0,
+                      "gl_lifecycle: CPU uploads must unbind inherited pixel-unpack buffers"))
+        return false;
     if (!require_true(g_last_video_frame == RETRO_HW_FRAME_BUFFER_VALID,
                       "gl_lifecycle: expected RETRO_HW_FRAME_BUFFER_VALID after context_reset"))
         return false;
