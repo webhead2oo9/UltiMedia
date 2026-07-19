@@ -64,6 +64,9 @@ static int viz_band_x(int band_idx, int band_count, int item_w) {
 }
 
 uint16_t get_gradient_color(float level) {
+    // Clamp: out-of-range input would overflow the uint8_t channel math.
+    if (level < 0.0f) level = 0.0f;
+    if (level > 1.0f) level = 1.0f;
     if (level < 0.5f) {
         // Green (0,255,0) → Yellow (255,255,0)
         float t = level * 2.0f;
@@ -445,8 +448,12 @@ static void draw_dots_mode(int band_count) {
         uint16_t color = cfg.viz_gradient ? get_gradient_color(viz_levels[i]) : cfg.fg_rgb;
 
         // Phosphor trail: older ghost first, both dimmed toward the bg.
+        // Heights are clamped because a layout shrink can leave stale trail
+        // values above the new panel height for a few frames.
         for (int g = 1; g >= 0; g--) {
             int gh = dot_trail[i][g];
+            if (gh > max_h - 1) gh = max_h - 1;
+            if (gh < 0) gh = 0;
             uint16_t gcolor = cfg.viz_gradient ? get_gradient_color((float)gh / (float)max_h) : cfg.fg_rgb;
             gcolor = mix565(gcolor, cfg.bg_rgb, (g == 0) ? 140 : 195);
             draw_dot(x, base_y - gh, gcolor);
@@ -682,8 +689,10 @@ static void draw_mirror_mode(int band_count) {
     if (emblem_w > in.w / 3) emblem_w = in.w / 3;
     int half_avail = (in.w - emblem_w) / 2 - 2 - max_shear;
     if (half_avail < 1) half_avail = 1;
-    if (band_count > half_avail) band_count = half_avail;
-    int spacing = half_avail / band_count;
+    // Narrow panels decimate evenly across the spectrum instead of silently
+    // truncating the treble bands away.
+    int draw_bands = (band_count > half_avail) ? half_avail : band_count;
+    int spacing = half_avail / draw_bands;
     if (spacing < 1) spacing = 1;
     int bar_w = spacing - 1;
     if (bar_w < 1) bar_w = 1;
@@ -691,8 +700,9 @@ static void draw_mirror_mode(int band_count) {
 
     for (int x = 0; x < in.w; x++) draw_pixel(in.x + x, base_y, horizon);
 
-    for (int i = 0; i < band_count; i++) {
-        int h = (int)(viz_levels[i] * max_h);
+    for (int i = 0; i < draw_bands; i++) {
+        int src = i * band_count / draw_bands;
+        int h = (int)(viz_levels[src] * max_h);
         if (h > max_h) h = max_h;
         int off0 = emblem_w / 2 + 2 + i * spacing;
 
@@ -722,8 +732,8 @@ static void draw_mirror_mode(int band_count) {
                     draw_pixel(bx + dir * w, base_y + 1 + v, color);
             }
 
-            if (cfg.viz_peak_hold > 0 && viz_peak_timers[i] > 0) {
-                int ph = (int)(viz_peaks[i] * max_h);
+            if (cfg.viz_peak_hold > 0 && viz_peak_timers[src] > 0) {
+                int ph = (int)(viz_peaks[src] * max_h);
                 if (ph >= max_h) ph = max_h - 1;
                 int bx = cx + dir * (off0 + ph / 6);
                 uint16_t pc = cfg.viz_gradient ? 0xF800 : cfg.fg_rgb;

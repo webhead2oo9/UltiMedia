@@ -237,7 +237,11 @@ static void ui_draw_screen(UiFrame *f, const UiPalette *pal) {
         if (f->total_frames > 0) {
             char total[16];
             format_time(total, sizeof(total), f->total_frames, f->source_rate);
-            draw_text(x1 - (int)strlen(total) * GLYPH_WIDTH, layout.time.y, total, pal->fg_dim);
+            int total_w = (int)strlen(total) * GLYPH_WIDTH;
+            int elapsed_w = (int)strlen(elapsed) * GLYPH_WIDTH;
+            // Skip the total when the row is too narrow for both labels.
+            if (x0 + elapsed_w + GLYPH_WIDTH + total_w <= x1)
+                draw_text(x1 - total_w, layout.time.y, total, pal->fg_dim);
         }
     }
 

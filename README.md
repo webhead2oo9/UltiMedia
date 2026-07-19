@@ -151,7 +151,7 @@ If you prefer working inside an MSYS2 shell directly, open the `UCRT64` shell. M
 python3 tests/run_tests.py
 gcc -shared -O2 -I./deps -I./src -o music_playlist_libretro.dll \
   src/core.c src/audio.c src/audio_codecs.c src/video.c src/visualizer.c \
-  src/metadata.c src/image_codecs.c src/config.c src/layout.c -lm
+  src/metadata.c src/image_codecs.c src/config.c src/layout.c src/ui.c -lm
 ```
 
 ### CI Coverage

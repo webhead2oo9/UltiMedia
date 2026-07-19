@@ -107,7 +107,7 @@ gcc -shared -O2 -I./deps -I./src -o music_playlist_libretro.dll \
 - Render within **320×240, RGB565** — never assume other dimensions.
 - Keep memory usage minimal (embedded/emulator context).
 - All UI elements are positioned from `layout.*` (computed in `layout.c`). The old non-responsive `media_*_y` offset path was removed — do not reintroduce per-element fixed coordinates.
-- On short content areas the layout degrades in a fixed order: the transport row auto-hides first, then the 2× title falls back to 1×, then the visualizer panel gives up height. Keep that priority intact when adding elements.
+- On short content areas the layout degrades in a fixed order: the transport row auto-hides first, then the 2× title falls back to 1×, then the visualizer panel gives up height (VU mode never shrinks below two meter rows). When even that cannot fit, the overflow guards drop elements bottom-up — transport, time, bar, then text — so the visualizer panel survives last. Keep that priority intact when adding elements.
 
 ## LibRetro callbacks (`core.c`)
 

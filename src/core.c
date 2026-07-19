@@ -731,17 +731,23 @@ static void apply_config_update(void) {
 
 static void refresh_config_and_layout(void) {
     TrackTextMode old_track_text_mode = cfg.track_text_mode;
+    bool old_show_txt = cfg.show_txt;
     apply_config_update();
     layout_compute();
 
-    if (old_track_text_mode != cfg.track_text_mode &&
-        track_count > 0 &&
+    if (track_count > 0 &&
         current_idx >= 0 &&
         current_idx < track_count &&
         tracks[current_idx]) {
-        metadata_refresh_display(tracks[current_idx], cfg.track_text_mode);
-        scroll_x = layout.text.x;
-        ui_reset_marquee();
+        if (old_track_text_mode != cfg.track_text_mode)
+            metadata_refresh_display(tracks[current_idx], cfg.track_text_mode);
+        // Restart the marquee when the text mode changes or the title is
+        // re-enabled, so it never resumes from a stale mid-scroll position.
+        if (old_track_text_mode != cfg.track_text_mode ||
+            (cfg.show_txt && !old_show_txt)) {
+            scroll_x = layout.text.x;
+            ui_reset_marquee();
+        }
     }
 }
 
