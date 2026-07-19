@@ -53,6 +53,10 @@ static bool g_hw_render_requested = false;
 static unsigned g_hw_render_context_type = 0;
 static struct retro_hw_render_callback g_hw_render_cb;
 static bool g_gl_stub_break_loader = false;
+static bool g_gl_stub_break_glow = false;      // glow entry points unresolvable
+static bool g_gl_stub_fbo_incomplete = false;  // glow FBOs never complete
+static unsigned int g_gl_stub_next_id = 1;     // unique names from the Gen stubs
+static int g_gl_stub_draw_calls = 0;
 static char g_video_frame_unset_sentinel;
 static const void *g_last_video_frame = NULL;
 
@@ -72,7 +76,7 @@ static void STUB_GLCALL stub_glViewport(int x, int y, int w, int h) { (void)x; (
 static void STUB_GLCALL stub_glClearColor(float r, float g, float b, float a) { (void)r; (void)g; (void)b; (void)a; }
 static void STUB_GLCALL stub_glClear(unsigned int mask) { (void)mask; }
 static void STUB_GLCALL stub_glPixelStorei(unsigned int pname, int param) { (void)pname; (void)param; }
-static void STUB_GLCALL stub_glGenTextures(int n, unsigned int *textures) { for (int i = 0; i < n; i++) textures[i] = 3; }
+static void STUB_GLCALL stub_glGenTextures(int n, unsigned int *textures) { for (int i = 0; i < n; i++) textures[i] = g_gl_stub_next_id++; }
 static void STUB_GLCALL stub_glDeleteTextures(int n, const unsigned int *textures) { (void)n; (void)textures; }
 static void STUB_GLCALL stub_glBindTexture(unsigned int target, unsigned int texture) { (void)target; (void)texture; }
 static void STUB_GLCALL stub_glTexParameteri(unsigned int target, unsigned int pname, int param) { (void)target; (void)pname; (void)param; }
@@ -100,16 +104,24 @@ static int STUB_GLCALL stub_glGetAttribLocation(unsigned int program, const char
 }
 static int STUB_GLCALL stub_glGetUniformLocation(unsigned int program, const char *name) { (void)program; (void)name; return 0; }
 static void STUB_GLCALL stub_glUniform1i(int location, int v0) { (void)location; (void)v0; }
-static void STUB_GLCALL stub_glGenBuffers(int n, unsigned int *buffers) { for (int i = 0; i < n; i++) buffers[i] = 4; }
+static void STUB_GLCALL stub_glGenBuffers(int n, unsigned int *buffers) { for (int i = 0; i < n; i++) buffers[i] = g_gl_stub_next_id++; }
 static void STUB_GLCALL stub_glDeleteBuffers(int n, const unsigned int *buffers) { (void)n; (void)buffers; }
 static void STUB_GLCALL stub_glBindBuffer(unsigned int target, unsigned int buffer) { (void)target; (void)buffer; }
 static void STUB_GLCALL stub_glBufferData(unsigned int target, ptrdiff_t size, const void *data, unsigned int usage) { (void)target; (void)size; (void)data; (void)usage; }
 static void STUB_GLCALL stub_glEnableVertexAttribArray(unsigned int index) { (void)index; }
 static void STUB_GLCALL stub_glDisableVertexAttribArray(unsigned int index) { (void)index; }
 static void STUB_GLCALL stub_glVertexAttribPointer(unsigned int index, int size, unsigned int type, unsigned char normalized, int stride, const void *pointer) { (void)index; (void)size; (void)type; (void)normalized; (void)stride; (void)pointer; }
-static void STUB_GLCALL stub_glDrawArrays(unsigned int mode, int first, int count) { (void)mode; (void)first; (void)count; }
+static void STUB_GLCALL stub_glDrawArrays(unsigned int mode, int first, int count) { (void)mode; (void)first; (void)count; g_gl_stub_draw_calls++; }
 static void STUB_GLCALL stub_glColorMask(unsigned char r, unsigned char g, unsigned char b, unsigned char a) { (void)r; (void)g; (void)b; (void)a; }
 static void STUB_GLCALL stub_glBindFramebuffer(unsigned int target, unsigned int framebuffer) { (void)target; (void)framebuffer; }
+static void STUB_GLCALL stub_glGenFramebuffers(int n, unsigned int *framebuffers) { for (int i = 0; i < n; i++) framebuffers[i] = g_gl_stub_next_id++; }
+static void STUB_GLCALL stub_glDeleteFramebuffers(int n, const unsigned int *framebuffers) { (void)n; (void)framebuffers; }
+static void STUB_GLCALL stub_glFramebufferTexture2D(unsigned int target, unsigned int attachment, unsigned int textarget, unsigned int texture, int level) { (void)target; (void)attachment; (void)textarget; (void)texture; (void)level; }
+static unsigned int STUB_GLCALL stub_glCheckFramebufferStatus(unsigned int target) { (void)target; return g_gl_stub_fbo_incomplete ? 0 : 0x8CD5; /* GL_FRAMEBUFFER_COMPLETE */ }
+static void STUB_GLCALL stub_glBlendFunc(unsigned int sfactor, unsigned int dfactor) { (void)sfactor; (void)dfactor; }
+static void STUB_GLCALL stub_glBlendEquation(unsigned int mode) { (void)mode; }
+static void STUB_GLCALL stub_glUniform1f(int location, float v0) { (void)location; (void)v0; }
+static void STUB_GLCALL stub_glUniform2f(int location, float v0, float v1) { (void)location; (void)v0; (void)v1; }
 
 typedef struct {
     const char *name;
@@ -132,6 +144,10 @@ static const GlStubEntry kGlStubs[] = {
     STUB_ENTRY(glBufferData), STUB_ENTRY(glEnableVertexAttribArray), STUB_ENTRY(glDisableVertexAttribArray),
     STUB_ENTRY(glVertexAttribPointer), STUB_ENTRY(glDrawArrays), STUB_ENTRY(glColorMask),
     STUB_ENTRY(glBindFramebuffer),
+    STUB_ENTRY(glGenFramebuffers), STUB_ENTRY(glDeleteFramebuffers),
+    STUB_ENTRY(glFramebufferTexture2D), STUB_ENTRY(glCheckFramebufferStatus),
+    STUB_ENTRY(glBlendFunc), STUB_ENTRY(glBlendEquation),
+    STUB_ENTRY(glUniform1f), STUB_ENTRY(glUniform2f),
 };
 #undef STUB_ENTRY
 
@@ -141,6 +157,11 @@ static retro_proc_address_t RETRO_CALLCONV stub_get_proc_address(const char *sym
     if (!sym) return NULL;
     // Simulates a driver missing one symbol so setup must fail cleanly.
     if (g_gl_stub_break_loader && strcmp(sym, "glTexSubImage2D") == 0) return NULL;
+    // Simulates a driver without FBO entry points (either name) so only the
+    // optional glow stage fails.
+    if (g_gl_stub_break_glow &&
+        (strcmp(sym, "glGenFramebuffers") == 0 || strcmp(sym, "glGenFramebuffersEXT") == 0))
+        return NULL;
     for (size_t i = 0; i < sizeof(kGlStubs) / sizeof(kGlStubs[0]); i++) {
         if (strcmp(sym, kGlStubs[i].name) == 0) return kGlStubs[i].fn;
     }
@@ -1318,12 +1339,17 @@ static bool test_gl_negotiation_lifecycle_and_fallback(TestContext *ctx) {
                       "gl_lifecycle: negotiated GL without a context must dupe (NULL), not submit a CPU frame"))
         return false;
 
-    // 3) context_reset arrives: hardware frames.
+    // 3) context_reset arrives: hardware frames, full bloom pipeline
+    // (bright-pass + two blur passes + scene blit + glow overlay = 5 draws).
     g_hw_render_cb.context_reset();
     g_last_video_frame = &g_video_frame_unset_sentinel;
+    g_gl_stub_draw_calls = 0;
     run_frames(1);
     if (!require_true(g_last_video_frame == RETRO_HW_FRAME_BUFFER_VALID,
                       "gl_lifecycle: expected RETRO_HW_FRAME_BUFFER_VALID after context_reset"))
+        return false;
+    if (!require_true(g_gl_stub_draw_calls == 5,
+                      "gl_lifecycle: expected 5 draws with glow enabled, got %d", g_gl_stub_draw_calls))
         return false;
 
     // 4) context_destroy: back to NULL dupes, still never a CPU frame.
@@ -1343,6 +1369,38 @@ static bool test_gl_negotiation_lifecycle_and_fallback(TestContext *ctx) {
     g_gl_stub_break_loader = false;
     if (!require_true(g_last_video_frame == NULL,
                       "gl_lifecycle: failed GL setup must dupe (NULL), not submit a CPU frame"))
+        return false;
+    g_hw_render_cb.context_destroy();
+
+    // 6) Glow-only failure (no FBO entry points): the picture survives as a
+    // plain passthrough hw frame (scene blit only = 1 draw).
+    g_gl_stub_break_glow = true;
+    g_hw_render_cb.context_reset();
+    g_last_video_frame = &g_video_frame_unset_sentinel;
+    g_gl_stub_draw_calls = 0;
+    run_frames(1);
+    g_gl_stub_break_glow = false;
+    if (!require_true(g_last_video_frame == RETRO_HW_FRAME_BUFFER_VALID,
+                      "gl_lifecycle: glow loader failure must not cost the hw frame"))
+        return false;
+    if (!require_true(g_gl_stub_draw_calls == 1,
+                      "gl_lifecycle: expected passthrough-only (1 draw) without glow, got %d", g_gl_stub_draw_calls))
+        return false;
+    g_hw_render_cb.context_destroy();
+
+    // 7) Glow FBOs never complete: same survival guarantee via the other
+    // failure exit.
+    g_gl_stub_fbo_incomplete = true;
+    g_hw_render_cb.context_reset();
+    g_last_video_frame = &g_video_frame_unset_sentinel;
+    g_gl_stub_draw_calls = 0;
+    run_frames(1);
+    g_gl_stub_fbo_incomplete = false;
+    if (!require_true(g_last_video_frame == RETRO_HW_FRAME_BUFFER_VALID,
+                      "gl_lifecycle: incomplete glow FBOs must not cost the hw frame"))
+        return false;
+    if (!require_true(g_gl_stub_draw_calls == 1,
+                      "gl_lifecycle: expected passthrough-only (1 draw) with incomplete FBOs, got %d", g_gl_stub_draw_calls))
         return false;
     g_hw_render_cb.context_destroy();
 
