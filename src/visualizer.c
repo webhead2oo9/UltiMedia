@@ -627,8 +627,8 @@ static void draw_scope_mode(void) {
     uint16_t panel = mix565(cfg.bg_rgb, 0x0000, 150);
     uint16_t grid = mix565(panel, cfg.fg_rgb, 26);
     uint16_t glow = mix565(panel, cfg.fg_rgb, 70);
-    uint16_t ghost0 = mix565(cfg.fg_rgb, panel, 150);
-    uint16_t ghost1 = mix565(cfg.fg_rgb, panel, 200);
+    uint16_t ghost0 = mix565(cfg.fg_rgb, panel, 185);
+    uint16_t ghost1 = mix565(cfg.fg_rgb, panel, 225);
 
     // Graticule: center hairline plus dot ticks along the top and bottom rails.
     for (int x = 0; x < w; x++) draw_pixel(x0 + x, cy, grid);

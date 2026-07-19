@@ -115,6 +115,10 @@ void config_update(retro_environment_t environ_cb) {
     cfg.viz_peak_hold = get_int_var(environ_cb, "media_viz_peak_hold", 30, 0, 300);
     cfg.track_text_mode = parse_track_text_mode(get_var_value(environ_cb, "media_use_filename"));
 
+    const char *renderer_value = get_var_value(environ_cb, "media_renderer");
+    cfg.renderer = (renderer_value && !strcmp(renderer_value, "OpenGL"))
+                 ? RENDERER_OPENGL : RENDERER_SOFTWARE;
+
 }
 
 void config_declare_variables(retro_environment_t cb) {
@@ -125,6 +129,7 @@ void config_declare_variables(retro_environment_t cb) {
         { "media_show_viz", "Show Visualizer; On|Off" }, { "media_show_bar", "Show Progress Bar; On|Off" },
         { "media_show_tim", "Show Time; On|Off" }, { "media_show_ico", "Show Transport Icons; On|Off" },
         { "media_resolution", "Resolution; 320x240|640x480|960x720|1280x960" },
+        { "media_renderer", "Renderer (restart); OpenGL|Software" },
         { "media_debug_layout", "Debug Layout Bounds; Off|On" },
         { "media_ui_top", "UI Top %; 20|0|10|30|40|50" },
         { "media_ui_bottom", "UI Bottom %; 80|50|60|70|90|100" },

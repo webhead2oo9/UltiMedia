@@ -11,6 +11,11 @@ typedef enum {
 } TrackTextMode;
 
 typedef enum {
+    RENDERER_SOFTWARE = 0,
+    RENDERER_OPENGL = 1
+} RendererMode;
+
+typedef enum {
     VIZ_MODE_BARS = 0,
     VIZ_MODE_DOTS = 1,
     VIZ_MODE_LINE = 2,
@@ -31,6 +36,9 @@ typedef struct {
     int viz_bands, viz_mode, viz_peak_hold;
     bool viz_gradient;
     TrackTextMode track_text_mode;
+    // Presentation backend. SET_HW_RENDER is load-time-only in LibRetro, so
+    // changing this takes effect at the next content load, not mid-session.
+    RendererMode renderer;
 } Config;
 
 // Global configuration instance

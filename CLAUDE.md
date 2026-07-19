@@ -33,6 +33,7 @@ UltiMedia is a LibRetro audio player and music visualizer that runs as a core pl
 | `config.c` | LibRetro core options (declare + read) |
 | `layout.c` | Responsive UI layout computation: stack fitting, transport auto-hide, title scaling |
 | `ui.c` | Screen composition: framed art, sunken visualizer panel, marquee title, progress bar, transport icons |
+| `render_gl.c` | Optional OpenGL presentation path (`SET_HW_RENDER`): uploads the finished software framebuffer and draws it through GL; self-contained GL declarations + `get_proc_address` loader, no GL SDK or link dependency |
 | `stb_vorbis_compat.h` | Shared Vorbis declarations used by `audio.c` and `metadata.c` |
 | `path_io.h` | UTF-8-aware file opening and path splitting, including wide Windows paths |
 | `core_state.h` | Serialized save-state layout, shared with the test harness |
@@ -77,7 +78,8 @@ Dependencies are not committed — they're fetched into `deps/` before building.
 python3 tests/run_tests.py
 gcc -shared -O2 -I./deps -I./src -o music_playlist_libretro.dll \
   src/core.c src/audio.c src/audio_codecs.c src/video.c src/visualizer.c \
-  src/metadata.c src/image_codecs.c src/config.c src/layout.c src/ui.c -lm
+  src/metadata.c src/image_codecs.c src/config.c src/layout.c src/ui.c \
+  src/render_gl.c -lm
 ```
 
 **macOS / Linux** — there is no setup script here; fetch deps manually (see the `curl` block in [`CONTRIBUTING.md`](CONTRIBUTING.md)), then run `python3 tests/run_tests.py`. The harness uses `cc` by default (override with `CC=`). The distributable DLL is built on Windows; on these platforms the harness is the primary local check.
@@ -125,6 +127,7 @@ All keys are prefixed `media_`, declared in `config_declare_variables()` and rea
 
 - **Visibility (On/Off, all On):** `media_show_art`, `media_show_txt`, `media_show_viz`, `media_show_bar`, `media_show_tim`, `media_show_ico` (transport icon row — additionally auto-hides when the content area is too short)
 - **Layout:** `media_resolution` (`320x240` | `640x480` | `960x720` | `1280x960`, default `320x240`), `media_debug_layout` (Off), and usable-region bounds `media_ui_top` (20), `media_ui_bottom` (80), `media_ui_left` (10), `media_ui_right` (90), as percentages
+- **Renderer:** `media_renderer` (`OpenGL` | `Software`, default `OpenGL`; when the variable is entirely unset the code falls back to Software) — `SET_HW_RENDER` is load-time-only, so changes apply at the next content load; if the frontend refuses GL (e.g. a d3d video driver), the core silently stays on software. Once negotiation succeeds, the video callback only ever gets `RETRO_HW_FRAME_BUFFER_VALID` or `NULL` (frame dupe) — never the CPU framebuffer, which 1.7.5's gl driver would ignore in hw mode
 - **Visualizer:** `media_viz_mode` (`Bars` | `VU Meter` | `Dots` | `Line` | `Scope` | `Mirror` | `Horizon`; legacy `FFT EQ` maps to `Bars`), `media_viz_bands` (40; presets 40/20), `media_viz_gradient` (On), `media_viz_peak_hold` (30; no effect in Scope/Horizon)
 - **Track text:** `media_use_filename` — `Show ID` (metadata) | `Show filename with extension` | `Show Filename without extension`
 - **Colors:** six 0–255 channels `media_bg_r/g/b` (0/64/0) and `media_fg_r/g/b` (0/255/0), packed into `cfg.bg_rgb` / `cfg.fg_rgb` as RGB565

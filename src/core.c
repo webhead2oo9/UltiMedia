@@ -13,6 +13,7 @@
 #include "config.h"
 #include "layout.h"
 #include "video.h"
+#include "render_gl.h"
 #include "ui.h"
 #include "audio.h"
 #include "metadata.h"
@@ -652,6 +653,7 @@ static void unload_session(void) {
     audio_close();
     metadata_free_art();
     free_tracks();
+    render_gl_shutdown();
     current_idx = 0;
     m3u_base_path[0] = '\0';
     reset_runtime_state(false);
@@ -885,7 +887,16 @@ void retro_run(void) {
         .scroll_x = &scroll_x,
     };
     ui_draw(&frame);
-    video_cb(framebuffer, fb_width, fb_height, fb_width * 2);
+    if (render_gl_negotiated()) {
+        // Once SET_HW_RENDER is accepted the contract allows only a hw frame
+        // or NULL (frame dupe) -- 1.7.5's gl driver ignores CPU uploads while
+        // its hw FBO is active. NULL covers the frames before context_reset
+        // and any GL setup failure (which context_reset already logged).
+        video_cb(render_gl_frame() ? RETRO_HW_FRAME_BUFFER_VALID : NULL,
+                 fb_width, fb_height, 0);
+    } else {
+        video_cb(framebuffer, fb_width, fb_height, fb_width * 2);
+    }
 }
 
 void retro_set_environment(retro_environment_t cb) {
@@ -1002,6 +1013,10 @@ bool retro_load_game(const struct retro_game_info *g) {
 
     start_shuffle_cycle(generate_shuffle_seed());
     apply_config_update();
+    // SET_HW_RENDER is only legal during load; when the frontend refuses,
+    // render_gl_frame() stays false and presentation continues in software.
+    if (cfg.renderer == RENDERER_OPENGL)
+        render_gl_request_context(environ_cb);
     // The frontend queries retro_get_system_av_info after load, so the base
     // size is declared there; no SET_GEOMETRY needed for this change.
     video_set_resolution(320 * cfg.ui_scale, 240 * cfg.ui_scale);

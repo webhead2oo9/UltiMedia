@@ -6,7 +6,7 @@ Write-Host "Bootstrapping Windows build prerequisites..."
 $commands = @(
     "pacman -S --needed --noconfirm mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-python curl"
 ) + (Get-UltiMediaDependencyCommands) + @(
-    "gcc -shared -O2 -I./deps -I./src -o music_playlist_libretro.dll src/core.c src/audio.c src/audio_codecs.c src/video.c src/visualizer.c src/metadata.c src/image_codecs.c src/config.c src/layout.c src/ui.c -lm"
+    "gcc -shared -O2 -I./deps -I./src -o music_playlist_libretro.dll src/core.c src/audio.c src/audio_codecs.c src/video.c src/visualizer.c src/metadata.c src/image_codecs.c src/config.c src/layout.c src/ui.c src/render_gl.c -lm"
 )
 
 Invoke-UltiMediaMsys -Commands $commands

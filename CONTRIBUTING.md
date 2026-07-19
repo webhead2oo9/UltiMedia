@@ -84,7 +84,8 @@ To build the core manually inside a UCRT64 shell (with `deps/` already populated
 ```bash
 gcc -shared -O2 -I./deps -I./src -o music_playlist_libretro.dll \
   src/core.c src/audio.c src/audio_codecs.c src/video.c src/visualizer.c \
-  src/metadata.c src/image_codecs.c src/config.c src/layout.c src/ui.c -lm
+  src/metadata.c src/image_codecs.c src/config.c src/layout.c src/ui.c \
+  src/render_gl.c -lm
 ```
 
 ## Code style
