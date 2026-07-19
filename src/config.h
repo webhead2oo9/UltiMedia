@@ -24,6 +24,7 @@ typedef enum {
 // Configuration structure for all UI and display options
 typedef struct {
     uint16_t bg_rgb, fg_rgb;
+    int ui_scale;   // 1 = 320x240, 2 = 640x480
     int ui_top, ui_bottom, ui_left, ui_right;
     bool show_art, show_txt, show_viz, show_bar, show_tim, show_ico;
     bool debug_layout;

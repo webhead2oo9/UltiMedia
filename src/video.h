@@ -2,8 +2,13 @@
 
 #include <stdint.h>
 
-#define FB_WIDTH 320
-#define FB_HEIGHT 240
+// Maximum framebuffer dimensions. The active size is fb_width x fb_height:
+// an integer multiple of 320x240 (1x-4x) chosen by the media_resolution option.
+#define FB_MAX_WIDTH 1280
+#define FB_MAX_HEIGHT 960
+
+extern int fb_width;
+extern int fb_height;
 
 // Glyph cell width of the 8x8 font used by draw_text/draw_text_clipped;
 // text measurement everywhere derives from this.
@@ -17,6 +22,9 @@ void video_init(void);
 
 // Free framebuffer
 void video_deinit(void);
+
+// Select the active output size (clamped to the max); clears the buffer
+void video_set_resolution(int w, int h);
 
 // Clear framebuffer to background color
 void video_clear(uint16_t bg_color);

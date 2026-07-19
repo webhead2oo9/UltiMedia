@@ -20,6 +20,12 @@ void viz_set_frame_dt(float dt) {
     viz_dt = dt;
 }
 
+// Resolution scale (1x = 320x240, 2x = 640x480): pixel-sized details are
+// authored at 1x and multiplied so the modes read identically when scaled.
+static int viz_s(void) {
+    return (cfg.ui_scale > 0) ? cfg.ui_scale : 1;
+}
+
 // Dots-mode phosphor trail: previous dot heights, most recent first.
 static int dot_trail[MAX_VIZ_BANDS][2] = {{0}};
 static float dot_trail_acc = 0.0f;
@@ -37,8 +43,8 @@ static float horizon_acc = 0.0f;
 #define SCOPE_TRIGGER_SEARCH 480  // rising-zero-crossing hunt range
 static int16_t scope_ring[SCOPE_RING] = {0};
 static int scope_ring_pos = 0;
-static int16_t scope_ghost_lo[2][FB_WIDTH] = {{0}};
-static int16_t scope_ghost_hi[2][FB_WIDTH] = {{0}};
+static int16_t scope_ghost_lo[2][FB_MAX_WIDTH] = {{0}};
+static int16_t scope_ghost_hi[2][FB_MAX_WIDTH] = {{0}};
 static float scope_ghost_acc = 0.0f;
 
 // 2048 points at 48kHz gives ~23Hz bins so the low log-spaced bands stop
@@ -408,6 +414,7 @@ static void draw_bars_mode(int band_count) {
 
     // Unlit segments sit just above the sunken panel shade (ui_palette mixes
     // the panel at bg->black 150), not the brighter screen background.
+    int s = viz_s();
     uint16_t unlit_color = mix565(mix565(cfg.bg_rgb, 0x0000, 150), cfg.fg_rgb, 16);
 
     for (int i = 0; i < band_count; i++) {
@@ -415,10 +422,10 @@ static void draw_bars_mode(int band_count) {
         if (h > max_h) h = max_h;
         int x_base = viz_band_x(i, band_count, draw_bar_width);
 
-        // LED ladder: 2px lit segments with 1px gaps; segments above the
-        // level stay faintly visible so the ladder reads as hardware.
+        // LED ladder: 2-unit lit segments with 1-unit gaps; segments above
+        // the level stay faintly visible so the ladder reads as hardware.
         for (int v = 0; v < max_h; v++) {
-            if ((v % 3) == 2) continue;
+            if (((v / s) % 3) == 2) continue;
             uint16_t color;
             if (v < h) color = cfg.viz_gradient ? get_gradient_color((float)v / (float)max_h) : cfg.fg_rgb;
             else color = unlit_color;
@@ -430,19 +437,17 @@ static void draw_bars_mode(int band_count) {
             int peak_h = (int)(viz_peaks[i] * max_h);
             if (peak_h >= max_h) peak_h = max_h - 1;
             uint16_t peak_color = cfg.viz_gradient ? 0xF800 : cfg.fg_rgb;
-            for (int w = 0; w < draw_bar_width; w++) {
-                draw_pixel(x_base + w, base_y - peak_h, peak_color);
-                if (peak_h + 1 < max_h) draw_pixel(x_base + w, base_y - peak_h - 1, peak_color);
+            for (int v = 0; v < 2 * s && peak_h + v < max_h; v++) {
+                for (int w = 0; w < draw_bar_width; w++)
+                    draw_pixel(x_base + w, base_y - peak_h - v, peak_color);
             }
         }
     }
 }
 
 static void draw_dot(int x, int y, uint16_t color) {
-    draw_pixel(x, y, color);
-    draw_pixel(x + 1, y, color);
-    draw_pixel(x, y - 1, color);
-    draw_pixel(x + 1, y - 1, color);
+    int s = viz_s();
+    draw_rect_fill(x, y - (2 * s - 1), 2 * s, 2 * s, color);
 }
 
 static void draw_dots_mode(int band_count) {
@@ -463,7 +468,7 @@ static void draw_dots_mode(int band_count) {
     for (int i = 0; i < band_count; i++) {
         int h = (int)(viz_levels[i] * max_h);
         if (h >= max_h) h = max_h - 1;
-        int x = viz_band_x(i, band_count, 2);
+        int x = viz_band_x(i, band_count, 2 * viz_s());
         uint16_t color = cfg.viz_gradient ? get_gradient_color(viz_levels[i]) : cfg.fg_rgb;
 
         // Phosphor trail: older ghost first, both dimmed toward the bg.
@@ -490,8 +495,7 @@ static void draw_dots_mode(int band_count) {
             int peak_h = (int)(viz_peaks[i] * max_h);
             if (peak_h >= max_h) peak_h = max_h - 1;
             uint16_t peak_color = cfg.viz_gradient ? 0xF800 : cfg.fg_rgb;
-            draw_pixel(x, base_y - peak_h, peak_color);
-            draw_pixel(x + 1, base_y - peak_h, peak_color);
+            draw_rect_fill(x, base_y - peak_h, 2 * viz_s(), viz_s(), peak_color);
         }
     }
 }
@@ -537,8 +541,7 @@ static void draw_line_mode(int band_count) {
             int peak_h = (int)(viz_peaks[i] * max_h);
             if (peak_h >= max_h) peak_h = max_h - 1;
             uint16_t peak_color = cfg.viz_gradient ? 0xF800 : cfg.fg_rgb;
-            draw_pixel(x, base_y - peak_h, peak_color);
-            draw_pixel(x + 1, base_y - peak_h, peak_color);
+            draw_rect_fill(x, base_y - peak_h, 2 * viz_s(), viz_s(), peak_color);
         }
     }
 }
@@ -546,6 +549,7 @@ static void draw_line_mode(int band_count) {
 // Meter face for the -40..0 dB sweep: unlit track, ticks at -30/-20/-10/-6,
 // red zone above -6 dB.
 static void vu_draw_face(int meter_x, int row_y, int meter_w, int meter_h) {
+    int s = viz_s();
     uint16_t track_color = mix565(cfg.bg_rgb, cfg.fg_rgb, 30);
     uint16_t tick_color = mix565(cfg.bg_rgb, cfg.fg_rgb, 100);
     uint16_t zone_color = mix565(cfg.bg_rgb, 0xF800, 100);
@@ -556,13 +560,14 @@ static void vu_draw_face(int meter_x, int row_y, int meter_w, int meter_h) {
     draw_rect_fill(meter_x + zone_x, row_y, meter_w - zone_x, meter_h, zone_color);
     for (int t = 0; t < 4; t++) {
         int tx = meter_x + (int)((float)meter_w * tick_pos[t]);
-        for (int y = -1; y <= meter_h; y++) draw_pixel(tx, row_y + y, tick_color);
+        draw_rect_fill(tx, row_y - s, s, meter_h + 2 * s, tick_color);
     }
 }
 
 static void vu_draw_meter_row(int label_x, int meter_x, int row_y, int meter_w,
                               int meter_h, int channel, const char *label) {
-    draw_text(label_x, row_y, label, cfg.fg_rgb);
+    int s = viz_s();
+    draw_text_scaled_clipped(label_x, row_y, label, cfg.fg_rgb, s, 0, fb_width);
     vu_draw_face(meter_x, row_y, meter_w, meter_h);
 
     int fill_w = (int)(viz_levels[channel] * meter_w);
@@ -576,14 +581,15 @@ static void vu_draw_meter_row(int label_x, int meter_x, int row_y, int meter_w,
         uint16_t peak_color = cfg.viz_gradient ? 0xF800 : cfg.fg_rgb;
         int peak_x = (int)(viz_peaks[channel] * meter_w);
         if (peak_x >= meter_w) peak_x = meter_w - 1;
-        for (int y = 0; y < meter_h; y++) draw_pixel(meter_x + peak_x, row_y + y, peak_color);
+        draw_rect_fill(meter_x + peak_x, row_y, s, meter_h, peak_color);
     }
 }
 
 static void draw_vu_meter_mode(void) {
-    const int meter_h = 4;
-    const int meter_gap = 4;
-    const int label_h = 8;
+    const int s = viz_s();
+    const int meter_h = 4 * s;
+    const int meter_gap = 4 * s;
+    const int label_h = 8 * s;
     const int row_step = (meter_h + meter_gap > label_h) ? (meter_h + meter_gap) : label_h;
     const int pair_h = row_step + label_h;
 
@@ -610,7 +616,7 @@ static int16_t scope_at(int idx) {
 static void draw_scope_mode(void) {
     int x0 = layout.viz_inner.x;
     int w = layout.viz_inner.w;
-    if (w > FB_WIDTH) w = FB_WIDTH;
+    if (w > FB_MAX_WIDTH) w = FB_MAX_WIDTH;
     int half = (layout.viz_inner.h - 2) / 2;
     if (half < 1) half = 1;
     int cy = layout.viz_inner.y + layout.viz_inner.h / 2;
@@ -623,7 +629,7 @@ static void draw_scope_mode(void) {
 
     // Graticule: center hairline plus dot ticks along the top and bottom rails.
     for (int x = 0; x < w; x++) draw_pixel(x0 + x, cy, grid);
-    for (int x = 0; x < w; x += 10) {
+    for (int x = 0; x < w; x += 10 * viz_s()) {
         draw_pixel(x0 + x, cy - half, grid);
         draw_pixel(x0 + x, cy + half, grid);
     }
@@ -691,6 +697,7 @@ static void draw_scope_mode(void) {
 // Kenwood-style mirrored spectrum: bands fan out from a center emblem with an
 // outward shear, LED-segmented, over a horizon line with a dimmed reflection.
 static void draw_mirror_mode(int band_count) {
+    const int s = viz_s();
     Rect in = layout.viz_inner;
     int cx = in.x + in.w / 2;
 
@@ -709,9 +716,9 @@ static void draw_mirror_mode(int band_count) {
     if (max_h < 1) max_h = 1;
     int max_shear = max_h / 6;
 
-    int emblem_w = 30;
+    int emblem_w = 30 * s;
     if (emblem_w > in.w / 3) emblem_w = in.w / 3;
-    int half_avail = (in.w - emblem_w) / 2 - 2 - max_shear;
+    int half_avail = (in.w - emblem_w) / 2 - 2 * s - max_shear;
     if (half_avail < 1) half_avail = 1;
     // Narrow panels decimate evenly across the spectrum instead of silently
     // truncating the treble bands away.
@@ -720,7 +727,7 @@ static void draw_mirror_mode(int band_count) {
     if (spacing < 1) spacing = 1;
     int bar_w = spacing - 1;
     if (bar_w < 1) bar_w = 1;
-    if (bar_w > 4) bar_w = 4;
+    if (bar_w > 4 * s) bar_w = 4 * s;
 
     for (int x = 0; x < in.w; x++) draw_pixel(in.x + x, base_y, horizon);
 
@@ -728,7 +735,7 @@ static void draw_mirror_mode(int band_count) {
         int src = i * band_count / draw_bands;
         int h = (int)(viz_levels[src] * max_h);
         if (h > max_h) h = max_h;
-        int off0 = emblem_w / 2 + 2 + i * spacing;
+        int off0 = emblem_w / 2 + 2 * s + i * spacing;
 
         for (int side = 0; side < 2; side++) {
             int dir = side ? -1 : 1;
@@ -770,10 +777,10 @@ static void draw_mirror_mode(int band_count) {
     // Center emblem: a bass-pulsing diamond crest — a dim outline ring with a
     // solid core that grows and heats up with the low bands.
     float bass = (viz_levels[0] + viz_levels[1] + viz_levels[2]) / 3.0f;
-    int es = 18 + (int)(bass * 8.0f);
-    if (es > emblem_w - 2) es = emblem_w - 2;
-    if (es > up_h - 2) es = up_h - 2;
-    if (es >= 6) {
+    int es = (18 + (int)(bass * 8.0f)) * s;
+    if (es > emblem_w - 2 * s) es = emblem_w - 2 * s;
+    if (es > up_h - 2 * s) es = up_h - 2 * s;
+    if (es >= 6 * s) {
         int r = es / 2;
         int my = in.y + (up_h - es) / 2 + r;
         uint16_t ring = mix565(panel, cfg.fg_rgb, 80);
@@ -781,10 +788,10 @@ static void draw_mirror_mode(int band_count) {
 
         for (int dy = -r; dy <= r; dy++) {
             int wl = r - ((dy < 0) ? -dy : dy);
-            draw_pixel(cx - wl, my + dy, ring);
-            draw_pixel(cx + wl, my + dy, ring);
+            draw_rect_fill(cx - wl, my + dy, s, 1, ring);
+            draw_rect_fill(cx + wl - s + 1, my + dy, s, 1, ring);
         }
-        int rc = r - 3;
+        int rc = r - 3 * s;
         if (rc < 1) rc = 1;
         for (int dy = -rc; dy <= rc; dy++) {
             int wl = rc - ((dy < 0) ? -dy : dy);

@@ -12,7 +12,7 @@ UltiMedia is a LibRetro audio player and music visualizer that runs as a core pl
 |---|---|
 | Language | C99 |
 | Shipped artifact | `music_playlist_libretro.dll` (Windows LibRetro core) |
-| Display | 320×240, RGB565 |
+| Display | Integer multiples of 320×240 (1×–4×, up to 1280×960) via `media_resolution`, RGB565 |
 | Audio | 48000 Hz output, 800 samples/frame |
 | Run tests | `python3 tests/run_tests.py` |
 | LibRetro API | RetroArch `1.7.5` header |
@@ -104,7 +104,8 @@ gcc -shared -O2 -I./deps -I./src -o music_playlist_libretro.dll \
 ```
 
 **Hard constraints**
-- Render within **320×240, RGB565** — never assume other dimensions.
+- The UI is authored at a logical **320×240** and multiplied by `cfg.ui_scale` (1×–4×, from `media_resolution`; framebuffer up to 1280×960, always RGB565). Position from `layout.*`, size against `fb_width`/`fb_height`, and multiply new pixel constants by the scale — never hardcode 320/240.
+- Resolution switches mid-session go through `RETRO_ENVIRONMENT_SET_GEOMETRY` within the pre-declared max — never `SET_SYSTEM_AV_INFO`, whose driver reinit can tear down EmuVR's shared-texture pipeline.
 - Keep memory usage minimal (embedded/emulator context).
 - All UI elements are positioned from `layout.*` (computed in `layout.c`). The old non-responsive `media_*_y` offset path was removed — do not reintroduce per-element fixed coordinates.
 - On short content areas the layout degrades in a fixed order: the transport row auto-hides first, then the 2× title falls back to 1×, then the visualizer panel gives up height (VU mode never shrinks below two meter rows). When even that cannot fit, the overflow guards drop elements bottom-up — transport, time, bar, then text — so the visualizer panel survives last. Keep that priority intact when adding elements.
@@ -123,7 +124,7 @@ gcc -shared -O2 -I./deps -I./src -o music_playlist_libretro.dll \
 All keys are prefixed `media_`, declared in `config_declare_variables()` and read in `config_update()`. Defaults in parentheses.
 
 - **Visibility (On/Off, all On):** `media_show_art`, `media_show_txt`, `media_show_viz`, `media_show_bar`, `media_show_tim`, `media_show_ico` (transport icon row — additionally auto-hides when the content area is too short)
-- **Layout:** `media_debug_layout` (Off) and usable-region bounds `media_ui_top` (20), `media_ui_bottom` (80), `media_ui_left` (10), `media_ui_right` (90), as percentages
+- **Layout:** `media_resolution` (`320x240` | `640x480` | `960x720` | `1280x960`, default `320x240`), `media_debug_layout` (Off), and usable-region bounds `media_ui_top` (20), `media_ui_bottom` (80), `media_ui_left` (10), `media_ui_right` (90), as percentages
 - **Visualizer:** `media_viz_mode` (`Bars` | `VU Meter` | `Dots` | `Line` | `Scope` | `Mirror` | `Horizon`; legacy `FFT EQ` maps to `Bars`), `media_viz_bands` (40; presets 40/20), `media_viz_gradient` (On), `media_viz_peak_hold` (30; no effect in Scope/Horizon)
 - **Track text:** `media_use_filename` — `Show ID` (metadata) | `Show filename with extension` | `Show Filename without extension`
 - **Colors:** six 0–255 channels `media_bg_r/g/b` (0/64/0) and `media_fg_r/g/b` (0/255/0), packed into `cfg.bg_rgb` / `cfg.fg_rgb` as RGB565

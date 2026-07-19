@@ -21,6 +21,12 @@ void ui_set_frame_dt(float dt) {
     ui_dt = dt;
 }
 
+// Resolution scale: chrome is authored at 1x (320x240) and multiplied so the
+// composition is identical at 640x480, just crisper where it counts.
+static int ui_s(void) {
+    return (cfg.ui_scale > 0) ? cfg.ui_scale : 1;
+}
+
 // Every chrome color is derived from the user's bg/fg pair so the core
 // options keep controlling the theme.
 typedef struct {
@@ -63,52 +69,60 @@ static int progress_width(const UiFrame *f, int width) {
     return (int)(((double)f->cur_frame / (double)f->total_frames) * (double)width);
 }
 
-// ---- Pixel transport icons (10x10, drawn procedurally) ---------------------
+// ---- Pixel transport icons (10x10 unit grid, each unit an s x s block) -----
+
+static void icon_px(int x, int y, int ux, int uy, uint16_t c) {
+    int s = ui_s();
+    draw_rect_fill(x + ux * s, y + uy * s, s, s, c);
+}
 
 static void icon_play(int x, int y, uint16_t c) {
     for (int r = 0; r < ICON_SIZE; r++) {
         int d = (r < ICON_SIZE / 2) ? r : ICON_SIZE - 1 - r;
         int w = 2 + d * 2;
-        for (int i = 0; i < w; i++) draw_pixel(x + i, y + r, c);
+        for (int i = 0; i < w; i++) icon_px(x, y, i, r, c);
     }
 }
 
 static void icon_pause(int x, int y, uint16_t c) {
-    draw_rect_fill(x, y, 3, ICON_SIZE, c);
-    draw_rect_fill(x + 7, y, 3, ICON_SIZE, c);
+    int s = ui_s();
+    draw_rect_fill(x, y, 3 * s, ICON_SIZE * s, c);
+    draw_rect_fill(x + 7 * s, y, 3 * s, ICON_SIZE * s, c);
 }
 
 static void icon_prev(int x, int y, uint16_t c) {
-    draw_rect_fill(x, y, 2, ICON_SIZE, c);
+    int s = ui_s();
+    draw_rect_fill(x, y, 2 * s, ICON_SIZE * s, c);
     for (int r = 0; r < ICON_SIZE; r++) {
         int d = (r < ICON_SIZE / 2) ? r : ICON_SIZE - 1 - r;
         int w = 2 + d * 2;
         if (w > 8) w = 8;
-        for (int i = 0; i < w; i++) draw_pixel(x + ICON_SIZE - 1 - i, y + r, c);
+        for (int i = 0; i < w; i++) icon_px(x, y, ICON_SIZE - 1 - i, r, c);
     }
 }
 
 static void icon_next(int x, int y, uint16_t c) {
+    int s = ui_s();
     for (int r = 0; r < ICON_SIZE; r++) {
         int d = (r < ICON_SIZE / 2) ? r : ICON_SIZE - 1 - r;
         int w = 2 + d * 2;
         if (w > 8) w = 8;
-        for (int i = 0; i < w; i++) draw_pixel(x + i, y + r, c);
+        for (int i = 0; i < w; i++) icon_px(x, y, i, r, c);
     }
-    draw_rect_fill(x + 8, y, 2, ICON_SIZE, c);
+    draw_rect_fill(x + 8 * s, y, 2 * s, ICON_SIZE * s, c);
 }
 
 static void icon_shuffle(int x, int y, uint16_t c) {
     // Two opposing arrows: top points right, bottom points left.
-    for (int i = 0; i < 7; i++) draw_pixel(x + i, y + 2, c);
+    for (int i = 0; i < 7; i++) icon_px(x, y, i, 2, c);
     for (int r = 0; r < 5; r++) {
         int d = (r < 3) ? r : 4 - r;
-        for (int i = 0; i <= d; i++) draw_pixel(x + 6 + i, y + r, c);
+        for (int i = 0; i <= d; i++) icon_px(x, y, 6 + i, r, c);
     }
-    for (int i = 3; i < 10; i++) draw_pixel(x + i, y + 7, c);
+    for (int i = 3; i < 10; i++) icon_px(x, y, i, 7, c);
     for (int r = 0; r < 5; r++) {
         int d = (r < 3) ? r : 4 - r;
-        for (int i = 0; i <= d; i++) draw_pixel(x + 3 - i, y + 5 + r, c);
+        for (int i = 0; i <= d; i++) icon_px(x, y, 3 - i, 5 + r, c);
     }
 }
 
@@ -126,11 +140,15 @@ static void ui_blit_art(int x, int y, int w, int h) {
 }
 
 static void ui_draw_art_framed(int x, int y, int w, int h, const UiPalette *pal) {
+    int s = ui_s();
     if (!art_buffer || w <= 0 || h <= 0) return;
-    draw_rect_fill(x, y + h + 2, w + 4, 2, pal->shadow);
-    draw_rect_fill(x + w + 2, y, 2, h + 2, pal->shadow);
-    draw_rect_outline(x - 1, y - 1, w + 2, h + 2, pal->frame_face);
-    draw_rect_bevel(x - 2, y - 2, w + 4, h + 4, pal->bevel_light, pal->bevel_dark);
+    draw_rect_fill(x, y + h + 2 * s, w + 4 * s, 2 * s, pal->shadow);
+    draw_rect_fill(x + w + 2 * s, y, 2 * s, h + 2 * s, pal->shadow);
+    for (int k = 0; k < s; k++)
+        draw_rect_outline(x - s + k, y - s + k, w + 2 * s - 2 * k, h + 2 * s - 2 * k, pal->frame_face);
+    for (int k = 0; k < s; k++)
+        draw_rect_bevel(x - 2 * s + k, y - 2 * s + k, w + 4 * s - 2 * k, h + 4 * s - 2 * k,
+                        pal->bevel_light, pal->bevel_dark);
     ui_blit_art(x, y, w, h);
 }
 
@@ -160,7 +178,7 @@ static void ui_update_marquee(int *scroll_x, int text_w, int region_x, int regio
         marquee_frac = 0.0f;
         return;
     }
-    marquee_frac += MARQUEE_SPEED_PXS * ui_dt;
+    marquee_frac += MARQUEE_SPEED_PXS * (float)ui_s() * ui_dt;
     int move = (int)marquee_frac;
     if (move > 0) {
         marquee_frac -= (float)move;
@@ -191,59 +209,66 @@ static void ui_draw_debug_overlay(void) {
 }
 
 static void ui_draw_transport(const UiFrame *f, const UiPalette *pal) {
+    int s = ui_s();
     Rect r = layout.icons;
-    int y = r.y + (r.h - ICON_SIZE) / 2;
+    int y = r.y + (r.h - ICON_SIZE * s) / 2;
     int play_x = layout.icon_pause_x;
-    bool trio_fits = r.w >= 58;
+    bool trio_fits = r.w >= 58 * s;
 
     if (trio_fits)
         icon_prev(layout.icon_seek_x, y, (f->seek_dir < 0) ? pal->fg : pal->fg_faint);
     if (f->paused) icon_pause(play_x, y, pal->fg);
     else icon_play(play_x, y, pal->fg);
     if (trio_fits)
-        icon_next(play_x + 24, y, (f->seek_dir > 0) ? pal->fg : pal->fg_faint);
+        icon_next(play_x + 24 * s, y, (f->seek_dir > 0) ? pal->fg : pal->fg_faint);
 
-    if (trio_fits && layout.icon_shuffle_x >= play_x + 24 + ICON_SIZE + 4)
+    if (trio_fits && layout.icon_shuffle_x >= play_x + 24 * s + (ICON_SIZE + 4) * s)
         icon_shuffle(layout.icon_shuffle_x, y, f->shuffle ? pal->fg : pal->fg_faint);
 
     if (f->track_count > 1) {
         char counter[24];
         snprintf(counter, sizeof(counter), "%d/%d", f->track_index + 1, f->track_count);
-        int cw = (int)strlen(counter) * GLYPH_WIDTH;
+        int cw = (int)strlen(counter) * GLYPH_WIDTH * s;
         int cx = r.x + r.w - cw;
-        if (cx >= layout.icon_shuffle_x + ICON_SIZE + 6)
-            draw_text(cx, r.y + (r.h - 8) / 2, counter, pal->fg_faint);
+        if (cx >= layout.icon_shuffle_x + (ICON_SIZE + 6) * s)
+            draw_text_scaled_clipped(cx, r.y + (r.h - 8 * s) / 2, counter, pal->fg_faint, s, 0, fb_width);
     }
 }
 
 static void ui_draw_screen(UiFrame *f, const UiPalette *pal) {
+    int s = ui_s();
+
     if (cfg.show_art && layout.art.w > 0 && layout.art.h > 0)
         ui_draw_art_framed(layout.art.x, layout.art.y, layout.art.w, layout.art.h, pal);
 
     if (cfg.show_viz && layout.viz.w > 0 && layout.viz.h > 0) {
         draw_rect_fill(layout.viz.x, layout.viz.y, layout.viz.w, layout.viz.h, pal->panel);
-        draw_rect_bevel(layout.viz.x, layout.viz.y, layout.viz.w, layout.viz.h,
-                        pal->bevel_dark, pal->bevel_light);
+        for (int k = 0; k < s; k++)
+            draw_rect_bevel(layout.viz.x + k, layout.viz.y + k,
+                            layout.viz.w - 2 * k, layout.viz.h - 2 * k,
+                            pal->bevel_dark, pal->bevel_light);
         viz_draw();
     }
 
     if (cfg.show_txt && layout.text.w > 0) {
-        int scale = (layout.text_scale > 0) ? layout.text_scale : 1;
+        int scale = ((layout.text_scale > 0) ? layout.text_scale : 1) * s;
         int text_w = (int)strlen(display_str) * GLYPH_WIDTH * scale;
         ui_update_marquee(f->scroll_x, text_w, layout.text.x, layout.text.w);
         draw_text_scaled_clipped(*f->scroll_x, layout.text.y, display_str, pal->fg,
                                  scale, layout.text.x, layout.text.w);
     }
 
-    if (cfg.show_bar && f->total_frames > 0 && layout.bar.w > 2 && layout.bar.h > 2) {
-        draw_rect_outline(layout.bar.x, layout.bar.y, layout.bar.w, layout.bar.h, pal->fg_dim);
-        draw_rect_fill(layout.bar.x + 1, layout.bar.y + 1,
-                       layout.bar.w - 2, layout.bar.h - 2, pal->panel);
-        int fill = progress_width(f, layout.bar.w - 2);
+    if (cfg.show_bar && f->total_frames > 0 && layout.bar.w > 2 * s && layout.bar.h > 2 * s) {
+        for (int k = 0; k < s; k++)
+            draw_rect_outline(layout.bar.x + k, layout.bar.y + k,
+                              layout.bar.w - 2 * k, layout.bar.h - 2 * k, pal->fg_dim);
+        draw_rect_fill(layout.bar.x + s, layout.bar.y + s,
+                       layout.bar.w - 2 * s, layout.bar.h - 2 * s, pal->panel);
+        int fill = progress_width(f, layout.bar.w - 2 * s);
         if (fill > 0)
-            draw_rect_fill(layout.bar.x + 1, layout.bar.y + 1, fill, layout.bar.h - 2, pal->fg_dim);
-        int handle_x = layout.bar.x + 1 + ((fill > 2) ? fill - 2 : 0);
-        draw_rect_fill(handle_x, layout.bar.y + 1, 2, layout.bar.h - 2, pal->handle);
+            draw_rect_fill(layout.bar.x + s, layout.bar.y + s, fill, layout.bar.h - 2 * s, pal->fg_dim);
+        int handle_x = layout.bar.x + s + ((fill > 2 * s) ? fill - 2 * s : 0);
+        draw_rect_fill(handle_x, layout.bar.y + s, 2 * s, layout.bar.h - 2 * s, pal->handle);
     }
 
     if (cfg.show_tim && layout.time.w > 0) {
@@ -252,15 +277,15 @@ static void ui_draw_screen(UiFrame *f, const UiPalette *pal) {
         int x0 = (layout.bar.w > 0) ? layout.bar.x : layout.time.x;
         int x1 = (layout.bar.w > 0) ? layout.bar.x + layout.bar.w
                                     : layout.time.x + layout.time.w;
-        draw_text(x0, layout.time.y, elapsed, pal->fg_dim);
+        draw_text_scaled_clipped(x0, layout.time.y, elapsed, pal->fg_dim, s, 0, fb_width);
         if (f->total_frames > 0) {
             char total[16];
             format_time(total, sizeof(total), f->total_frames, f->source_rate);
-            int total_w = (int)strlen(total) * GLYPH_WIDTH;
-            int elapsed_w = (int)strlen(elapsed) * GLYPH_WIDTH;
+            int total_w = (int)strlen(total) * GLYPH_WIDTH * s;
+            int elapsed_w = (int)strlen(elapsed) * GLYPH_WIDTH * s;
             // Skip the total when the row is too narrow for both labels.
-            if (x0 + elapsed_w + GLYPH_WIDTH + total_w <= x1)
-                draw_text(x1 - total_w, layout.time.y, total, pal->fg_dim);
+            if (x0 + elapsed_w + GLYPH_WIDTH * s + total_w <= x1)
+                draw_text_scaled_clipped(x1 - total_w, layout.time.y, total, pal->fg_dim, s, 0, fb_width);
         }
     }
 

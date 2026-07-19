@@ -5,14 +5,27 @@
 #include <string.h>
 
 uint16_t *framebuffer = NULL;
+int fb_width = 320;
+int fb_height = 240;
 
 void video_init(void) {
-    framebuffer = malloc(FB_WIDTH * FB_HEIGHT * sizeof(uint16_t));
+    // Allocate at the maximum so resolution switches never reallocate.
+    framebuffer = malloc(FB_MAX_WIDTH * FB_MAX_HEIGHT * sizeof(uint16_t));
     if (!framebuffer) {
         core_log(RETRO_LOG_ERROR, "[MusicCore] Failed to allocate framebuffer\n");
         return;
     }
-    memset(framebuffer, 0, FB_WIDTH * FB_HEIGHT * sizeof(uint16_t));
+    memset(framebuffer, 0, FB_MAX_WIDTH * FB_MAX_HEIGHT * sizeof(uint16_t));
+}
+
+void video_set_resolution(int w, int h) {
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+    if (w > FB_MAX_WIDTH) w = FB_MAX_WIDTH;
+    if (h > FB_MAX_HEIGHT) h = FB_MAX_HEIGHT;
+    fb_width = w;
+    fb_height = h;
+    if (framebuffer) memset(framebuffer, 0, FB_MAX_WIDTH * FB_MAX_HEIGHT * sizeof(uint16_t));
 }
 
 void video_deinit(void) {
@@ -22,7 +35,7 @@ void video_deinit(void) {
 
 void video_clear(uint16_t bg_color) {
     if (!framebuffer) return;
-    for (int i = 0; i < FB_WIDTH * FB_HEIGHT; i++) {
+    for (int i = 0; i < fb_width * fb_height; i++) {
         framebuffer[i] = bg_color;
     }
 }
@@ -37,12 +50,12 @@ void video_fill_vgradient(uint16_t top, uint16_t bottom) {
     int tr = ((top >> 11) & 0x1F) << 3, tg = ((top >> 5) & 0x3F) << 2, tb = (top & 0x1F) << 3;
     int br = ((bottom >> 11) & 0x1F) << 3, bg = ((bottom >> 5) & 0x3F) << 2, bb = (bottom & 0x1F) << 3;
 
-    for (int y = 0; y < FB_HEIGHT; y++) {
-        int r8 = tr + ((br - tr) * y) / (FB_HEIGHT - 1);
-        int g8 = tg + ((bg - tg) * y) / (FB_HEIGHT - 1);
-        int b8 = tb + ((bb - tb) * y) / (FB_HEIGHT - 1);
-        uint16_t *row = framebuffer + y * FB_WIDTH;
-        for (int x = 0; x < FB_WIDTH; x++) {
+    for (int y = 0; y < fb_height; y++) {
+        int r8 = tr + ((br - tr) * y) / (fb_height - 1);
+        int g8 = tg + ((bg - tg) * y) / (fb_height - 1);
+        int b8 = tb + ((bb - tb) * y) / (fb_height - 1);
+        uint16_t *row = framebuffer + y * fb_width;
+        for (int x = 0; x < fb_width; x++) {
             int d = bayer[y & 3][x & 3];
             int r = (r8 + (d >> 1)) >> 3;
             int g = (g8 + (d >> 2)) >> 2;
@@ -56,8 +69,8 @@ void video_fill_vgradient(uint16_t top, uint16_t bottom) {
 }
 
 void draw_pixel(int x, int y, uint16_t color) {
-    if (framebuffer && x >= 0 && x < FB_WIDTH && y >= 0 && y < FB_HEIGHT) {
-        framebuffer[y * FB_WIDTH + x] = color;
+    if (framebuffer && x >= 0 && x < fb_width && y >= 0 && y < fb_height) {
+        framebuffer[y * fb_width + x] = color;
     }
 }
 

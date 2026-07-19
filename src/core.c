@@ -617,7 +617,7 @@ static void open_previous_track(void) {
 }
 
 static void reset_runtime_state(bool preserve_shuffle_mode) {
-    scroll_x = FB_WIDTH;
+    scroll_x = fb_width;
     held_buttons = 0;
     viz_mode_user_override = false;
     is_paused = false;
@@ -739,7 +739,22 @@ static void apply_config_update(void) {
 static void refresh_config_and_layout(void) {
     TrackTextMode old_track_text_mode = cfg.track_text_mode;
     bool old_show_txt = cfg.show_txt;
+    int old_ui_scale = cfg.ui_scale;
     apply_config_update();
+
+    if (cfg.ui_scale != old_ui_scale) {
+        // Switch within the pre-declared max via SET_GEOMETRY: unlike
+        // SET_SYSTEM_AV_INFO this does not reinitialize the video driver
+        // (which would tear down EmuVR's shared-texture pipeline).
+        video_set_resolution(320 * cfg.ui_scale, 240 * cfg.ui_scale);
+        struct retro_game_geometry geom = {
+            (unsigned)fb_width, (unsigned)fb_height,
+            FB_MAX_WIDTH, FB_MAX_HEIGHT,
+            4.0f / 3.0f
+        };
+        environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &geom);
+    }
+
     layout_compute();
 
     if (track_count > 0 &&
@@ -854,7 +869,7 @@ void retro_run(void) {
         .scroll_x = &scroll_x,
     };
     ui_draw(&frame);
-    video_cb(framebuffer, FB_WIDTH, FB_HEIGHT, FB_WIDTH * 2);
+    video_cb(framebuffer, fb_width, fb_height, fb_width * 2);
 }
 
 void retro_set_environment(retro_environment_t cb) {
@@ -971,6 +986,7 @@ bool retro_load_game(const struct retro_game_info *g) {
 
     start_shuffle_cycle(generate_shuffle_seed());
     apply_config_update();
+    video_set_resolution(320 * cfg.ui_scale, 240 * cfg.ui_scale);
     layout_compute();
 
     bool opened = open_track(0);
@@ -1021,10 +1037,10 @@ void retro_get_system_info(struct retro_system_info *i) {
 void retro_get_system_av_info(struct retro_system_av_info *info) {
     info->timing.fps = 60.0;
     info->timing.sample_rate = (double)OUT_RATE;
-    info->geometry.base_width = FB_WIDTH;
-    info->geometry.base_height = FB_HEIGHT;
-    info->geometry.max_width = FB_WIDTH;
-    info->geometry.max_height = FB_HEIGHT;
+    info->geometry.base_width = fb_width;
+    info->geometry.base_height = fb_height;
+    info->geometry.max_width = FB_MAX_WIDTH;
+    info->geometry.max_height = FB_MAX_HEIGHT;
     info->geometry.aspect_ratio = 4.0 / 3.0;
 }
 void retro_set_audio_sample(retro_audio_sample_t cb) { (void)cb; }
@@ -1168,7 +1184,7 @@ bool retro_unserialize(const void *d, size_t s) {
     int restored_scale = (layout.text_scale > 0) ? layout.text_scale : 1;
     int min_scroll_x = -((int)strlen(display_str) * GLYPH_WIDTH * restored_scale);
     scroll_x = state->scroll_x;
-    if (scroll_x < min_scroll_x || scroll_x > FB_WIDTH) scroll_x = FB_WIDTH;
+    if (scroll_x < min_scroll_x || scroll_x > fb_width) scroll_x = fb_width;
     ff_rw_icon_timer = state->ff_rw_icon_timer;
     if (ff_rw_icon_timer < 0) ff_rw_icon_timer = 0;
     if (ff_rw_icon_timer > SEEK_ICON_FRAMES) ff_rw_icon_timer = SEEK_ICON_FRAMES;

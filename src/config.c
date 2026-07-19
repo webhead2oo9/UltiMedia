@@ -80,6 +80,12 @@ void config_update(retro_environment_t environ_cb) {
     cfg.show_bar = get_bool_var(environ_cb, "media_show_bar", true);
     cfg.show_tim = get_bool_var(environ_cb, "media_show_tim", true);
     cfg.show_ico = get_bool_var(environ_cb, "media_show_ico", true);
+    const char *res_value = get_var_value(environ_cb, "media_resolution");
+    if (res_value && !strcmp(res_value, "1280x960")) cfg.ui_scale = 4;
+    else if (res_value && !strcmp(res_value, "960x720")) cfg.ui_scale = 3;
+    else if (res_value && !strcmp(res_value, "640x480")) cfg.ui_scale = 2;
+    else cfg.ui_scale = 1;
+
     cfg.debug_layout = get_bool_var(environ_cb, "media_debug_layout", false);
     cfg.ui_top = get_int_var(environ_cb, "media_ui_top", 20, 0, 100);
     cfg.ui_bottom = get_int_var(environ_cb, "media_ui_bottom", 80, 0, 100);
@@ -118,6 +124,7 @@ void config_declare_variables(retro_environment_t cb) {
         { "media_show_art", "Show Art; On|Off" }, { "media_show_txt", "Show Scroll Text; On|Off" },
         { "media_show_viz", "Show Visualizer; On|Off" }, { "media_show_bar", "Show Progress Bar; On|Off" },
         { "media_show_tim", "Show Time; On|Off" }, { "media_show_ico", "Show Transport Icons; On|Off" },
+        { "media_resolution", "Resolution; 320x240|640x480|960x720|1280x960" },
         { "media_debug_layout", "Debug Layout Bounds; Off|On" },
         { "media_ui_top", "UI Top %; 20|0|10|30|40|50" },
         { "media_ui_bottom", "UI Bottom %; 80|50|60|70|90|100" },

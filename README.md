@@ -87,6 +87,7 @@ When a track loads, art is searched in this order:
 
 ### Layout
 
+- Resolution: `320x240` (default), `640x480`, `960x720`, or `1280x960`
 - UI Top / Bottom / Left / Right (%): defines the usable screen region
 - Debug Layout Bounds: `Off/On`
   - Draws colored layout boxes to help tune positioning
