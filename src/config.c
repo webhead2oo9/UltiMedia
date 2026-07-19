@@ -97,6 +97,7 @@ void config_update(retro_environment_t environ_cb) {
         else if (!strcmp(viz_mode_value, "VU Meter")) cfg.viz_mode = VIZ_MODE_VU;
         else if (!strcmp(viz_mode_value, "Dots")) cfg.viz_mode = VIZ_MODE_DOTS;
         else if (!strcmp(viz_mode_value, "Line")) cfg.viz_mode = VIZ_MODE_LINE;
+        else if (!strcmp(viz_mode_value, "Scope")) cfg.viz_mode = VIZ_MODE_SCOPE;
         else cfg.viz_mode = VIZ_MODE_BARS;
     } else {
         cfg.viz_mode = VIZ_MODE_BARS;
@@ -121,7 +122,7 @@ void config_declare_variables(retro_environment_t cb) {
         { "media_ui_left", "UI Left %; 10|0|20|30" },
         { "media_ui_right", "UI Right %; 90|70|80|100" },
         { "media_viz_bands", "Viz Bands; 40|20" },
-        { "media_viz_mode", "Viz Mode; Bars|VU Meter|Dots|Line" },
+        { "media_viz_mode", "Viz Mode; Bars|VU Meter|Dots|Line|Scope" },
         { "media_viz_gradient", "Viz Gradient; On|Off" },
         { "media_viz_peak_hold", "Peak Hold; 30|0|15|45|60" },
         { "media_use_filename", "Track Text Mode; Show ID|Show filename with extension|Show Filename without extension" },

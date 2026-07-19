@@ -114,7 +114,8 @@ static int next_viz_mode(int mode) {
     if (mode == VIZ_MODE_BARS || mode == VIZ_MODE_FFT_EQ_LEGACY) return VIZ_MODE_VU; // Bars -> VU Meter
     if (mode == VIZ_MODE_VU) return VIZ_MODE_DOTS;                                     // VU Meter -> Dots
     if (mode == VIZ_MODE_DOTS) return VIZ_MODE_LINE;                                   // Dots -> Line
-    return VIZ_MODE_BARS;                                                               // Line/unknown -> Bars
+    if (mode == VIZ_MODE_LINE) return VIZ_MODE_SCOPE;                                  // Line -> Scope
+    return VIZ_MODE_BARS;                                                               // Scope/unknown -> Bars
 }
 
 static int is_valid_viz_mode(int mode) {
@@ -122,7 +123,8 @@ static int is_valid_viz_mode(int mode) {
            mode == VIZ_MODE_FFT_EQ_LEGACY ||
            mode == VIZ_MODE_VU ||
            mode == VIZ_MODE_DOTS ||
-           mode == VIZ_MODE_LINE;
+           mode == VIZ_MODE_LINE ||
+           mode == VIZ_MODE_SCOPE;
 }
 
 static int normalize_viz_mode(int mode) {

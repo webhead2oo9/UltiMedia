@@ -20,7 +20,7 @@ All source lives in `src/`, split by responsibility:
 | `audio.c` | Audio decoding, resampling, decoder snapshot restore |
 | `audio_codecs.c` | Third-party audio decoder implementations (`dr_*`, `stb_vorbis`) |
 | `video.c` | Framebuffer, drawing primitives (fill/bevel/blend/dither), and text rendering |
-| `visualizer.c` | Audio visualizations (Bars, VU Meter, Dots, Line) |
+| `visualizer.c` | Audio visualizations (Bars, VU Meter, Dots, Line, Scope) |
 | `metadata.c` | Track metadata parsing and album art lookup/loading |
 | `image_codecs.c` | Third-party image decoder implementation (`stb_image`) |
 | `config.c` | LibRetro core options |

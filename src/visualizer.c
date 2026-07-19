@@ -15,6 +15,16 @@ int viz_peak_timers[MAX_VIZ_BANDS] = {0};
 static int dot_trail[MAX_VIZ_BANDS][2] = {{0}};
 static int dot_trail_tick = 0;
 
+// Scope mode: raw mono sample ring plus per-column afterglow traces.
+#define SCOPE_RING 2048
+#define SCOPE_SPAN 800            // ~17ms window at 48kHz
+#define SCOPE_TRIGGER_SEARCH 480  // rising-zero-crossing hunt range
+static int16_t scope_ring[SCOPE_RING] = {0};
+static int scope_ring_pos = 0;
+static int16_t scope_ghost_lo[2][FB_WIDTH] = {{0}};
+static int16_t scope_ghost_hi[2][FB_WIDTH] = {{0}};
+static int scope_ghost_tick = 0;
+
 // 2048 points at 48kHz gives ~23Hz bins so the low log-spaced bands stop
 // sharing bins; the analysis window grows to ~43ms, fine for a visualizer.
 #define FFT_SIZE 2048
@@ -327,13 +337,29 @@ static void vu_update_levels(const int16_t *audio_buf, int samples_per_frame, in
     }
 }
 
+// Always fed so switching into Scope mode shows a live trace immediately.
+static void scope_feed(const int16_t *audio_buf, int samples_per_frame) {
+    if (!audio_buf || samples_per_frame <= 0) return;
+    for (int i = 0; i < samples_per_frame; i++) {
+        int32_t mono = ((int32_t)audio_buf[i * 2] + (int32_t)audio_buf[i * 2 + 1]) / 2;
+        scope_ring[scope_ring_pos] = (int16_t)mono;
+        scope_ring_pos = (scope_ring_pos + 1) & (SCOPE_RING - 1);
+    }
+}
+
 void viz_update_levels(const int16_t *audio_buf, int samples_per_frame) {
     int band_count = cfg.viz_bands;
     if (band_count < 1) band_count = 1;
     if (band_count > MAX_VIZ_BANDS) band_count = MAX_VIZ_BANDS;
 
+    scope_feed(audio_buf, samples_per_frame);
+
     if (cfg.viz_mode == VIZ_MODE_VU) {
         vu_update_levels(audio_buf, samples_per_frame, band_count);
+        return;
+    }
+    if (cfg.viz_mode == VIZ_MODE_SCOPE) {
+        viz_decay_levels(band_count);
         return;
     }
 
@@ -533,12 +559,100 @@ static void draw_vu_meter_mode(void) {
     vu_draw_meter_row(label_x, meter_x, pair_top + row_step, meter_w, meter_h, 1, "R");
 }
 
+static int16_t scope_at(int idx) {
+    return scope_ring[idx & (SCOPE_RING - 1)];
+}
+
+// Triggered oscilloscope with a car-deck face: dot graticule, per-column
+// min/max envelope, amplitude-gradient trace with a glow edge, and two
+// afterglow ghost traces.
+static void draw_scope_mode(void) {
+    int x0 = layout.viz_inner.x;
+    int w = layout.viz_inner.w;
+    if (w > FB_WIDTH) w = FB_WIDTH;
+    int half = (layout.viz_inner.h - 2) / 2;
+    if (half < 1) half = 1;
+    int cy = layout.viz_inner.y + layout.viz_inner.h / 2;
+
+    uint16_t panel = mix565(cfg.bg_rgb, 0x0000, 150);
+    uint16_t grid = mix565(panel, cfg.fg_rgb, 26);
+    uint16_t glow = mix565(panel, cfg.fg_rgb, 70);
+    uint16_t ghost0 = mix565(cfg.fg_rgb, panel, 150);
+    uint16_t ghost1 = mix565(cfg.fg_rgb, panel, 200);
+
+    // Graticule: center hairline plus dot ticks along the top and bottom rails.
+    for (int x = 0; x < w; x++) draw_pixel(x0 + x, cy, grid);
+    for (int x = 0; x < w; x += 10) {
+        draw_pixel(x0 + x, cy - half, grid);
+        draw_pixel(x0 + x, cy + half, grid);
+    }
+
+    // Trigger: align the window to the first rising zero crossing so the
+    // trace holds still instead of jittering.
+    int idx0 = scope_ring_pos + SCOPE_RING - SCOPE_SPAN - SCOPE_TRIGGER_SEARCH;
+    int win = idx0;
+    for (int k = 0; k < SCOPE_TRIGGER_SEARCH - 1; k++) {
+        if (scope_at(idx0 + k) < 0 && scope_at(idx0 + k + 1) >= 0) {
+            win = idx0 + k + 1;
+            break;
+        }
+    }
+
+    // Afterglow ghosts, oldest first, then the live trace over them.
+    for (int g = 1; g >= 0; g--) {
+        uint16_t gc = (g == 0) ? ghost0 : ghost1;
+        for (int x = 0; x < w; x++) {
+            int lo = scope_ghost_lo[g][x], hi = scope_ghost_hi[g][x];
+            if (lo < -half) lo = -half;
+            if (hi > half) hi = half;
+            for (int yy = lo; yy <= hi; yy++) draw_pixel(x0 + x, cy - yy, gc);
+        }
+    }
+
+    scope_ghost_tick ^= 1;
+    int record = (scope_ghost_tick == 0);
+
+    for (int x = 0; x < w; x++) {
+        int s0 = win + (x * SCOPE_SPAN) / w;
+        int s1 = win + ((x + 1) * SCOPE_SPAN) / w;
+        if (s1 <= s0) s1 = s0 + 1;
+        int mn = 32767, mx = -32768;
+        for (int s = s0; s < s1; s++) {
+            int v = scope_at(s);
+            if (v < mn) mn = v;
+            if (v > mx) mx = v;
+        }
+        int ylo = (mn * half) / 32768;
+        int yhi = (mx * half) / 32768;
+
+        for (int yy = ylo; yy <= yhi; yy++) {
+            int dist = (yy < 0) ? -yy : yy;
+            uint16_t c = cfg.viz_gradient ? get_gradient_color((float)dist / (float)half) : cfg.fg_rgb;
+            draw_pixel(x0 + x, cy - yy, c);
+        }
+        if (yhi + 1 <= half) draw_pixel(x0 + x, cy - (yhi + 1), glow);
+        if (ylo - 1 >= -half) draw_pixel(x0 + x, cy - (ylo - 1), glow);
+
+        if (record) {
+            scope_ghost_lo[1][x] = scope_ghost_lo[0][x];
+            scope_ghost_hi[1][x] = scope_ghost_hi[0][x];
+            scope_ghost_lo[0][x] = (int16_t)ylo;
+            scope_ghost_hi[0][x] = (int16_t)yhi;
+        }
+    }
+}
+
 void viz_reset_state(void) {
     memset(viz_levels, 0, sizeof(viz_levels));
     memset(viz_peaks, 0, sizeof(viz_peaks));
     memset(viz_peak_timers, 0, sizeof(viz_peak_timers));
     memset(dot_trail, 0, sizeof(dot_trail));
     dot_trail_tick = 0;
+    memset(scope_ring, 0, sizeof(scope_ring));
+    scope_ring_pos = 0;
+    memset(scope_ghost_lo, 0, sizeof(scope_ghost_lo));
+    memset(scope_ghost_hi, 0, sizeof(scope_ghost_hi));
+    scope_ghost_tick = 0;
     memset(fft_re, 0, sizeof(fft_re));
     memset(fft_im, 0, sizeof(fft_im));
     memset(fft_band_energy, 0, sizeof(fft_band_energy));
@@ -564,5 +678,7 @@ void viz_draw(void) {
         draw_line_mode(band_count);
     } else if (cfg.viz_mode == VIZ_MODE_VU) {
         draw_vu_meter_mode();
+    } else if (cfg.viz_mode == VIZ_MODE_SCOPE) {
+        draw_scope_mode();
     }
 }
