@@ -14,6 +14,12 @@
 // presenting through the software video callback.
 bool render_gl_request_context(retro_environment_t environ_cb);
 
+// True while an OpenGL context is negotiated for the current content load.
+// Once negotiation succeeds, the LibRetro contract forbids software frames:
+// the video callback must receive RETRO_HW_FRAME_BUFFER_VALID or NULL (frame
+// dupe) -- 1.7.5's gl driver ignores CPU uploads once its hw FBO is active.
+bool render_gl_negotiated(void);
+
 // Upload the CPU framebuffer and draw it into the frontend's FBO. Call from
 // retro_run only. Returns true when a GL frame was produced (pass
 // RETRO_HW_FRAME_BUFFER_VALID to the video callback); false when GL is

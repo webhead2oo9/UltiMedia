@@ -34,7 +34,10 @@ typedef ptrdiff_t GLsizeiptr;
 #define GL_CULL_FACE 0x0B44
 #define GL_BLEND 0x0BE2
 #define GL_SCISSOR_TEST 0x0C11
+#define GL_UNPACK_SWAP_BYTES 0x0CF0
 #define GL_UNPACK_ROW_LENGTH 0x0CF2
+#define GL_UNPACK_SKIP_ROWS 0x0CF3
+#define GL_UNPACK_SKIP_PIXELS 0x0CF4
 #define GL_UNPACK_ALIGNMENT 0x0CF5
 #define GL_TEXTURE_2D 0x0DE1
 #define GL_FLOAT 0x1406
@@ -95,6 +98,7 @@ typedef ptrdiff_t GLsizeiptr;
     X(glDisableVertexAttribArray, void, (GLuint index)) \
     X(glVertexAttribPointer, void, (GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void *pointer)) \
     X(glDrawArrays, void, (GLenum mode, GLint first, GLsizei count)) \
+    X(glColorMask, void, (GLboolean r, GLboolean g, GLboolean b, GLboolean a)) \
     X(glBindFramebuffer, void, (GLenum target, GLuint framebuffer))
 
 #define RGL_DECLARE(name, ret, args) \
@@ -150,7 +154,8 @@ static bool load_gl_functions(void) {
     if (!glBindFramebuffer_) ok = false;
     if (!ok)
         core_log(RETRO_LOG_ERROR,
-                 "[MusicCore] GL renderer: required GL functions are missing; using software frames.\n");
+                 "[MusicCore] GL renderer: required GL functions are missing; video will dupe. "
+                 "Set media_renderer to Software and reload.\n");
     return ok;
 }
 
@@ -253,9 +258,14 @@ static void context_reset_cb(void) {
     gl_vbo = 0;
 
     if (!load_gl_functions()) return;
+    // A shared context can arrive with a stale error flag left by the
+    // frontend; drain it so build_resources' final check only sees errors
+    // raised by this setup. Bounded: drivers queue at most a few flags.
+    for (int i = 0; i < 16 && glGetError_() != GL_NO_ERROR; i++) {}
     if (!build_resources()) {
         core_log(RETRO_LOG_ERROR,
-                 "[MusicCore] GL renderer: resource setup failed; using software frames.\n");
+                 "[MusicCore] GL renderer: resource setup failed; video will dupe. "
+                 "Set media_renderer to Software and reload.\n");
         return;
     }
     gl_resources_ready = true;
@@ -263,11 +273,12 @@ static void context_reset_cb(void) {
 }
 
 static void context_destroy_cb(void) {
-    if (gl_resources_ready) {
-        if (gl_texture) glDeleteTextures_(1, &gl_texture);
-        if (gl_program) glDeleteProgram_(gl_program);
-        if (gl_vbo) glDeleteBuffers_(1, &gl_vbo);
-    }
+    // Delete whatever exists, not just fully-built generations -- with
+    // cache_context a partially-built set would otherwise outlive the
+    // session inside the shared context.
+    if (gl_texture && glDeleteTextures_) glDeleteTextures_(1, &gl_texture);
+    if (gl_program && glDeleteProgram_) glDeleteProgram_(gl_program);
+    if (gl_vbo && glDeleteBuffers_) glDeleteBuffers_(1, &gl_vbo);
     gl_texture = 0;
     gl_program = 0;
     gl_vbo = 0;
@@ -306,15 +317,19 @@ bool render_gl_frame(void) {
     glDisable_(GL_CULL_FACE);
     glDisable_(GL_BLEND);
     glDisable_(GL_SCISSOR_TEST);
+    glColorMask_(1, 1, 1, 1);
     glClearColor_(0.0f, 0.0f, 0.0f, 1.0f);
     glClear_(GL_COLOR_BUFFER_BIT);
 
     // EmuVR runs with a shared GL context, so pixel-store state can be
-    // anything the frontend left behind; set what the upload depends on.
+    // anything the frontend left behind; pin every knob the upload reads.
     glActiveTexture_(GL_TEXTURE0);
     glBindTexture_(GL_TEXTURE_2D, gl_texture);
     glPixelStorei_(GL_UNPACK_ALIGNMENT, 2);
     glPixelStorei_(GL_UNPACK_ROW_LENGTH, 0);
+    glPixelStorei_(GL_UNPACK_SKIP_ROWS, 0);
+    glPixelStorei_(GL_UNPACK_SKIP_PIXELS, 0);
+    glPixelStorei_(GL_UNPACK_SWAP_BYTES, 0);
     glTexSubImage2D_(GL_TEXTURE_2D, 0, 0, 0, fb_width, fb_height,
                      GL_RGB, GL_UNSIGNED_SHORT_5_6_5, framebuffer);
 
@@ -335,7 +350,15 @@ bool render_gl_frame(void) {
     glDisableVertexAttribArray_((GLuint)gl_attr_uv);
     glBindBuffer_(GL_ARRAY_BUFFER, 0);
     glUseProgram_(0);
+    // Unbind owned objects so nothing leaks into the frontend's pass in the
+    // shared context.
+    glBindTexture_(GL_TEXTURE_2D, 0);
+    glBindFramebuffer_(GL_FRAMEBUFFER, 0);
     return true;
+}
+
+bool render_gl_negotiated(void) {
+    return gl_negotiated;
 }
 
 void render_gl_shutdown(void) {

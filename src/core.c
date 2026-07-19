@@ -887,13 +887,16 @@ void retro_run(void) {
         .scroll_x = &scroll_x,
     };
     ui_draw(&frame);
-    // GL path when negotiated and healthy; otherwise the software buffer.
-    // The gl driver accepts software frames even in hw_render mode, so a GL
-    // failure mid-session degrades to normal presentation, not a black screen.
-    if (render_gl_frame())
-        video_cb(RETRO_HW_FRAME_BUFFER_VALID, fb_width, fb_height, 0);
-    else
+    if (render_gl_negotiated()) {
+        // Once SET_HW_RENDER is accepted the contract allows only a hw frame
+        // or NULL (frame dupe) -- 1.7.5's gl driver ignores CPU uploads while
+        // its hw FBO is active. NULL covers the frames before context_reset
+        // and any GL setup failure (which context_reset already logged).
+        video_cb(render_gl_frame() ? RETRO_HW_FRAME_BUFFER_VALID : NULL,
+                 fb_width, fb_height, 0);
+    } else {
         video_cb(framebuffer, fb_width, fb_height, fb_width * 2);
+    }
 }
 
 void retro_set_environment(retro_environment_t cb) {

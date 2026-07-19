@@ -1,6 +1,7 @@
 #include <math.h>
 #include <stdarg.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -46,6 +47,105 @@ static size_t g_audio_batch_frames = 0;
 static int16_t g_last_audio_batch[SAMPLES_PER_FRAME * 2];
 static size_t g_last_audio_batch_frames = 0;
 static size_t g_video_frame_count = 0;
+// Fake-GL frontend state for the hw_render lifecycle test.
+static bool g_accept_hw_render = false;
+static bool g_hw_render_requested = false;
+static unsigned g_hw_render_context_type = 0;
+static struct retro_hw_render_callback g_hw_render_cb;
+static bool g_gl_stub_break_loader = false;
+static char g_video_frame_unset_sentinel;
+static const void *g_last_video_frame = NULL;
+
+// Stub GL implementation handed to the core through get_proc_address.
+// Signatures match src/render_gl.c's RGL_PROC_LIST exactly so the calls stay
+// well-defined; behavior is the minimum for resource setup to "succeed".
+#if defined(_WIN32) && !defined(_WIN64)
+#define STUB_GLCALL __stdcall
+#else
+#define STUB_GLCALL
+#endif
+
+static unsigned int STUB_GLCALL stub_glGetError(void) { return 0; }
+static void STUB_GLCALL stub_glEnable(unsigned int cap) { (void)cap; }
+static void STUB_GLCALL stub_glDisable(unsigned int cap) { (void)cap; }
+static void STUB_GLCALL stub_glViewport(int x, int y, int w, int h) { (void)x; (void)y; (void)w; (void)h; }
+static void STUB_GLCALL stub_glClearColor(float r, float g, float b, float a) { (void)r; (void)g; (void)b; (void)a; }
+static void STUB_GLCALL stub_glClear(unsigned int mask) { (void)mask; }
+static void STUB_GLCALL stub_glPixelStorei(unsigned int pname, int param) { (void)pname; (void)param; }
+static void STUB_GLCALL stub_glGenTextures(int n, unsigned int *textures) { for (int i = 0; i < n; i++) textures[i] = 3; }
+static void STUB_GLCALL stub_glDeleteTextures(int n, const unsigned int *textures) { (void)n; (void)textures; }
+static void STUB_GLCALL stub_glBindTexture(unsigned int target, unsigned int texture) { (void)target; (void)texture; }
+static void STUB_GLCALL stub_glTexParameteri(unsigned int target, unsigned int pname, int param) { (void)target; (void)pname; (void)param; }
+static void STUB_GLCALL stub_glTexImage2D(unsigned int target, int level, int internalformat, int w, int h, int border, unsigned int format, unsigned int type, const void *pixels) { (void)target; (void)level; (void)internalformat; (void)w; (void)h; (void)border; (void)format; (void)type; (void)pixels; }
+static void STUB_GLCALL stub_glTexSubImage2D(unsigned int target, int level, int x, int y, int w, int h, unsigned int format, unsigned int type, const void *pixels) { (void)target; (void)level; (void)x; (void)y; (void)w; (void)h; (void)format; (void)type; (void)pixels; }
+static void STUB_GLCALL stub_glActiveTexture(unsigned int texture) { (void)texture; }
+static unsigned int STUB_GLCALL stub_glCreateShader(unsigned int type) { (void)type; return 1; }
+static void STUB_GLCALL stub_glShaderSource(unsigned int shader, int count, const char **string, const int *length) { (void)shader; (void)count; (void)string; (void)length; }
+static void STUB_GLCALL stub_glCompileShader(unsigned int shader) { (void)shader; }
+static void STUB_GLCALL stub_glGetShaderiv(unsigned int shader, unsigned int pname, int *params) { (void)shader; (void)pname; if (params) *params = 1; }
+static void STUB_GLCALL stub_glGetShaderInfoLog(unsigned int shader, int buf_size, int *length, char *info_log) { (void)shader; (void)buf_size; if (length) *length = 0; if (info_log) info_log[0] = '\0'; }
+static void STUB_GLCALL stub_glDeleteShader(unsigned int shader) { (void)shader; }
+static unsigned int STUB_GLCALL stub_glCreateProgram(void) { return 5; }
+static void STUB_GLCALL stub_glAttachShader(unsigned int program, unsigned int shader) { (void)program; (void)shader; }
+static void STUB_GLCALL stub_glLinkProgram(unsigned int program) { (void)program; }
+static void STUB_GLCALL stub_glGetProgramiv(unsigned int program, unsigned int pname, int *params) { (void)program; (void)pname; if (params) *params = 1; }
+static void STUB_GLCALL stub_glGetProgramInfoLog(unsigned int program, int buf_size, int *length, char *info_log) { (void)program; (void)buf_size; if (length) *length = 0; if (info_log) info_log[0] = '\0'; }
+static void STUB_GLCALL stub_glUseProgram(unsigned int program) { (void)program; }
+static void STUB_GLCALL stub_glDeleteProgram(unsigned int program) { (void)program; }
+static int STUB_GLCALL stub_glGetAttribLocation(unsigned int program, const char *name) {
+    (void)program;
+    if (name && strcmp(name, "a_pos") == 0) return 0;
+    if (name && strcmp(name, "a_uv") == 0) return 1;
+    return -1;
+}
+static int STUB_GLCALL stub_glGetUniformLocation(unsigned int program, const char *name) { (void)program; (void)name; return 0; }
+static void STUB_GLCALL stub_glUniform1i(int location, int v0) { (void)location; (void)v0; }
+static void STUB_GLCALL stub_glGenBuffers(int n, unsigned int *buffers) { for (int i = 0; i < n; i++) buffers[i] = 4; }
+static void STUB_GLCALL stub_glDeleteBuffers(int n, const unsigned int *buffers) { (void)n; (void)buffers; }
+static void STUB_GLCALL stub_glBindBuffer(unsigned int target, unsigned int buffer) { (void)target; (void)buffer; }
+static void STUB_GLCALL stub_glBufferData(unsigned int target, ptrdiff_t size, const void *data, unsigned int usage) { (void)target; (void)size; (void)data; (void)usage; }
+static void STUB_GLCALL stub_glEnableVertexAttribArray(unsigned int index) { (void)index; }
+static void STUB_GLCALL stub_glDisableVertexAttribArray(unsigned int index) { (void)index; }
+static void STUB_GLCALL stub_glVertexAttribPointer(unsigned int index, int size, unsigned int type, unsigned char normalized, int stride, const void *pointer) { (void)index; (void)size; (void)type; (void)normalized; (void)stride; (void)pointer; }
+static void STUB_GLCALL stub_glDrawArrays(unsigned int mode, int first, int count) { (void)mode; (void)first; (void)count; }
+static void STUB_GLCALL stub_glColorMask(unsigned char r, unsigned char g, unsigned char b, unsigned char a) { (void)r; (void)g; (void)b; (void)a; }
+static void STUB_GLCALL stub_glBindFramebuffer(unsigned int target, unsigned int framebuffer) { (void)target; (void)framebuffer; }
+
+typedef struct {
+    const char *name;
+    retro_proc_address_t fn;
+} GlStubEntry;
+
+#define STUB_ENTRY(name) { #name, (retro_proc_address_t)stub_##name }
+static const GlStubEntry kGlStubs[] = {
+    STUB_ENTRY(glGetError), STUB_ENTRY(glEnable), STUB_ENTRY(glDisable),
+    STUB_ENTRY(glViewport), STUB_ENTRY(glClearColor), STUB_ENTRY(glClear),
+    STUB_ENTRY(glPixelStorei), STUB_ENTRY(glGenTextures), STUB_ENTRY(glDeleteTextures),
+    STUB_ENTRY(glBindTexture), STUB_ENTRY(glTexParameteri), STUB_ENTRY(glTexImage2D),
+    STUB_ENTRY(glTexSubImage2D), STUB_ENTRY(glActiveTexture), STUB_ENTRY(glCreateShader),
+    STUB_ENTRY(glShaderSource), STUB_ENTRY(glCompileShader), STUB_ENTRY(glGetShaderiv),
+    STUB_ENTRY(glGetShaderInfoLog), STUB_ENTRY(glDeleteShader), STUB_ENTRY(glCreateProgram),
+    STUB_ENTRY(glAttachShader), STUB_ENTRY(glLinkProgram), STUB_ENTRY(glGetProgramiv),
+    STUB_ENTRY(glGetProgramInfoLog), STUB_ENTRY(glUseProgram), STUB_ENTRY(glDeleteProgram),
+    STUB_ENTRY(glGetAttribLocation), STUB_ENTRY(glGetUniformLocation), STUB_ENTRY(glUniform1i),
+    STUB_ENTRY(glGenBuffers), STUB_ENTRY(glDeleteBuffers), STUB_ENTRY(glBindBuffer),
+    STUB_ENTRY(glBufferData), STUB_ENTRY(glEnableVertexAttribArray), STUB_ENTRY(glDisableVertexAttribArray),
+    STUB_ENTRY(glVertexAttribPointer), STUB_ENTRY(glDrawArrays), STUB_ENTRY(glColorMask),
+    STUB_ENTRY(glBindFramebuffer),
+};
+#undef STUB_ENTRY
+
+static uintptr_t RETRO_CALLCONV stub_get_current_framebuffer(void) { return 0; }
+
+static retro_proc_address_t RETRO_CALLCONV stub_get_proc_address(const char *sym) {
+    if (!sym) return NULL;
+    // Simulates a driver missing one symbol so setup must fail cleanly.
+    if (g_gl_stub_break_loader && strcmp(sym, "glTexSubImage2D") == 0) return NULL;
+    for (size_t i = 0; i < sizeof(kGlStubs) / sizeof(kGlStubs[0]); i++) {
+        if (strcmp(sym, kGlStubs[i].name) == 0) return kGlStubs[i].fn;
+    }
+    return NULL;
+}
 
 extern void retro_init(void);
 extern void retro_deinit(void);
@@ -103,6 +203,17 @@ static bool env_cb(unsigned cmd, void *data) {
             var->value = NULL;
             return false;
         }
+        case RETRO_ENVIRONMENT_SET_HW_RENDER: {
+            struct retro_hw_render_callback *hw = (struct retro_hw_render_callback*)data;
+            if (!hw) return false;
+            g_hw_render_requested = true;
+            g_hw_render_context_type = (unsigned)hw->context_type;
+            if (!g_accept_hw_render) return false;
+            hw->get_current_framebuffer = stub_get_current_framebuffer;
+            hw->get_proc_address = stub_get_proc_address;
+            g_hw_render_cb = *hw;
+            return true;
+        }
         default:
             return false;
     }
@@ -119,10 +230,10 @@ static size_t audio_batch_cb(const int16_t *data, size_t frames) {
 }
 
 static void video_refresh_cb(const void *data, unsigned width, unsigned height, size_t pitch) {
-    (void)data;
     (void)width;
     (void)height;
     (void)pitch;
+    g_last_video_frame = data;
     g_video_frame_count++;
 }
 
@@ -1162,6 +1273,83 @@ static bool test_track_change_resets_fft_visualizer_state(TestContext *ctx) {
     return true;
 }
 
+// Drives the SET_HW_RENDER contract end-to-end with the stub GL frontend:
+// once negotiation succeeds, only RETRO_HW_FRAME_BUFFER_VALID or NULL may
+// reach the video callback -- a raw CPU framebuffer would be ignored by the
+// 1.7.5 gl driver and show stale FBO contents.
+static bool test_gl_negotiation_lifecycle_and_fallback(TestContext *ctx) {
+    char path[MAX_PATH_LEN];
+    build_path(path, sizeof(path), ctx->fixtures_dir, "track_a.wav");
+
+    // 1) Frontend refuses the GL context: software frames keep flowing.
+    prepare_test();
+    set_env_option("media_renderer", "OpenGL");
+    g_accept_hw_render = false;
+    g_hw_render_requested = false;
+    if (!load_game_path(path))
+        return failf("gl_lifecycle: failed to load %s", path);
+    if (!require_true(g_hw_render_requested, "gl_lifecycle: expected a SET_HW_RENDER request"))
+        return false;
+    if (!require_true(g_hw_render_context_type == RETRO_HW_CONTEXT_OPENGL,
+                      "gl_lifecycle: expected an OpenGL context request, got %u", g_hw_render_context_type))
+        return false;
+    g_last_video_frame = &g_video_frame_unset_sentinel;
+    run_frames(1);
+    if (!require_true(g_last_video_frame != NULL &&
+                      g_last_video_frame != RETRO_HW_FRAME_BUFFER_VALID &&
+                      g_last_video_frame != &g_video_frame_unset_sentinel,
+                      "gl_lifecycle: refused negotiation must present the software framebuffer"))
+        return false;
+
+    // 2) Negotiation accepted but no context yet: NULL dupes only.
+    prepare_test();
+    set_env_option("media_renderer", "OpenGL");
+    g_accept_hw_render = true;
+    g_hw_render_requested = false;
+    memset(&g_hw_render_cb, 0, sizeof(g_hw_render_cb));
+    if (!load_game_path(path))
+        return failf("gl_lifecycle: failed to reload %s", path);
+    if (!require_true(g_hw_render_requested && g_hw_render_cb.context_reset && g_hw_render_cb.context_destroy,
+                      "gl_lifecycle: expected hw render callbacks to be registered"))
+        return false;
+    g_last_video_frame = &g_video_frame_unset_sentinel;
+    run_frames(1);
+    if (!require_true(g_last_video_frame == NULL,
+                      "gl_lifecycle: negotiated GL without a context must dupe (NULL), not submit a CPU frame"))
+        return false;
+
+    // 3) context_reset arrives: hardware frames.
+    g_hw_render_cb.context_reset();
+    g_last_video_frame = &g_video_frame_unset_sentinel;
+    run_frames(1);
+    if (!require_true(g_last_video_frame == RETRO_HW_FRAME_BUFFER_VALID,
+                      "gl_lifecycle: expected RETRO_HW_FRAME_BUFFER_VALID after context_reset"))
+        return false;
+
+    // 4) context_destroy: back to NULL dupes, still never a CPU frame.
+    g_hw_render_cb.context_destroy();
+    g_last_video_frame = &g_video_frame_unset_sentinel;
+    run_frames(1);
+    if (!require_true(g_last_video_frame == NULL,
+                      "gl_lifecycle: expected NULL dupes after context_destroy"))
+        return false;
+
+    // 5) GL setup failure inside context_reset (driver missing a symbol):
+    // the core must degrade to dupes, never to a CPU frame.
+    g_gl_stub_break_loader = true;
+    g_hw_render_cb.context_reset();
+    g_last_video_frame = &g_video_frame_unset_sentinel;
+    run_frames(1);
+    g_gl_stub_break_loader = false;
+    if (!require_true(g_last_video_frame == NULL,
+                      "gl_lifecycle: failed GL setup must dupe (NULL), not submit a CPU frame"))
+        return false;
+    g_hw_render_cb.context_destroy();
+
+    g_accept_hw_render = false;
+    return true;
+}
+
 static const TestCase kTests[] = {
     { "basic_load_play", test_basic_load_play },
     { "playlist_navigation", test_playlist_navigation },
@@ -1186,6 +1374,7 @@ static const TestCase kTests[] = {
     { "config_layout_smoke", test_config_layout_smoke },
     { "vu_mode_updates_once_per_frame", test_vu_mode_updates_once_per_frame },
     { "track_change_resets_fft_visualizer_state", test_track_change_resets_fft_visualizer_state },
+    { "gl_negotiation_lifecycle_and_fallback", test_gl_negotiation_lifecycle_and_fallback },
 };
 
 #ifdef _WIN32
