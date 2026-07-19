@@ -59,8 +59,10 @@ void ui_reset_marquee(void) {
 }
 
 static void format_time(char *out, size_t out_sz, uint64_t frames, uint32_t rate) {
-    int sec = rate ? (int)(frames / rate) : 0;
-    snprintf(out, out_sz, "%02d:%02d", sec / 60, sec % 60);
+    uint64_t sec = rate ? frames / rate : 0;
+    snprintf(out, out_sz, "%02llu:%02llu",
+             (unsigned long long)(sec / 60),
+             (unsigned long long)(sec % 60));
 }
 
 static int progress_width(const UiFrame *f, int width) {
@@ -272,14 +274,14 @@ static void ui_draw_screen(UiFrame *f, const UiPalette *pal) {
     }
 
     if (cfg.show_tim && layout.time.w > 0) {
-        char elapsed[16];
+        char elapsed[24];
         format_time(elapsed, sizeof(elapsed), f->cur_frame, f->source_rate);
         int x0 = (layout.bar.w > 0) ? layout.bar.x : layout.time.x;
         int x1 = (layout.bar.w > 0) ? layout.bar.x + layout.bar.w
                                     : layout.time.x + layout.time.w;
         draw_text_scaled_clipped(x0, layout.time.y, elapsed, pal->fg_dim, s, 0, fb_width);
         if (f->total_frames > 0) {
-            char total[16];
+            char total[24];
             format_time(total, sizeof(total), f->total_frames, f->source_rate);
             int total_w = (int)strlen(total) * GLYPH_WIDTH * s;
             int elapsed_w = (int)strlen(elapsed) * GLYPH_WIDTH * s;

@@ -179,6 +179,8 @@ def generate_fixtures(fixtures_dir: Path) -> None:
     write_png(fixtures_dir / "art_track.png", 256, 200, (30, 120, 220))
     write_unknown_length_flac(fixtures_dir / "unknown_length.flac")
     write_underreported_ogg(fixtures_dir / "underreported.ogg")
+    shutil.copyfile(RESTORE_DATA_DIR / "no_xing.mp3", fixtures_dir / "no_xing.mp3")
+    write_playlist(fixtures_dir / "playlist_no_xing_mp3.m3u", ["no_xing.mp3"])
 
 
 def protect_windows_path_backslashes(value: str) -> str:

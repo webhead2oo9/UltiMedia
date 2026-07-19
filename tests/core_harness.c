@@ -383,6 +383,31 @@ static bool test_basic_load_play(TestContext *ctx) {
     return true;
 }
 
+static bool test_m3u_mp3_without_xing_duration(TestContext *ctx) {
+    char path[MAX_PATH_LEN];
+    prepare_test();
+    build_path(path, sizeof(path), ctx->fixtures_dir, "playlist_no_xing_mp3.m3u");
+
+    if (!load_game_path(path))
+        return failf("m3u_mp3_without_xing_duration: failed to load %s", path);
+    if (!require_true(core_debug_get_track_count() == 1,
+                      "m3u_mp3_without_xing_duration: expected one playlist track"))
+        return false;
+    if (!require_true(current_type == AUDIO_MP3 && source_rate == 44100,
+                      "m3u_mp3_without_xing_duration: expected a 44.1 kHz MP3"))
+        return false;
+    if (!require_true(total_frames > 0 && total_frames < source_rate,
+                      "m3u_mp3_without_xing_duration: invalid frame count %llu",
+                      (unsigned long long)total_frames))
+        return false;
+
+    run_frames(3);
+    if (!require_true(cur_frame > 0 && g_audio_batch_frames > 0,
+                      "m3u_mp3_without_xing_duration: playback did not advance"))
+        return false;
+    return true;
+}
+
 static bool test_playlist_navigation(TestContext *ctx) {
     char path[MAX_PATH_LEN];
     prepare_test();
@@ -1442,6 +1467,7 @@ static bool test_gl_negotiation_lifecycle_and_fallback(TestContext *ctx) {
 
 static const TestCase kTests[] = {
     { "basic_load_play", test_basic_load_play },
+    { "m3u_mp3_without_xing_duration", test_m3u_mp3_without_xing_duration },
     { "playlist_navigation", test_playlist_navigation },
     { "utf16_unicode_playlists", test_utf16_unicode_playlists },
     { "bad_track_skipping", test_bad_track_skipping },

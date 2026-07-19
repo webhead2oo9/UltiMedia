@@ -229,7 +229,10 @@ bool audio_open_track(const char *path) {
             current_type = AUDIO_MP3;
             source_rate = ((drmp3*)decoder)->sampleRate;
             source_channels = ((drmp3*)decoder)->channels;
-            total_frames = ((drmp3*)decoder)->totalPCMFrameCount;
+            // The struct field is UINT64_MAX when Xing/Info length metadata
+            // is absent. The public API scans seekable files in that case
+            // and otherwise uses the header count without a scan.
+            total_frames = drmp3_get_pcm_frame_count((drmp3*)decoder);
             load_success = true;
         }
     } else if (ext && strcasecmp_simple(ext, ".ogg") == 0) {
