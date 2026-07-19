@@ -15,6 +15,13 @@ int viz_peak_timers[MAX_VIZ_BANDS] = {0};
 static int dot_trail[MAX_VIZ_BANDS][2] = {{0}};
 static int dot_trail_tick = 0;
 
+// Horizon mode: ring of recent spectrum rows forming a 3D landscape; the
+// newest ridge stands at the front and history recedes into fog.
+#define HORIZON_ROWS 24
+static float horizon_hist[HORIZON_ROWS][MAX_VIZ_BANDS] = {{0}};
+static int horizon_head = 0;
+static int horizon_tick = 0;
+
 // Scope mode: raw mono sample ring plus per-column afterglow traces.
 #define SCOPE_RING 2048
 #define SCOPE_SPAN 800            // ~17ms window at 48kHz
@@ -292,6 +299,14 @@ static void fft_update_levels(const int16_t *audio_buf, int samples_per_frame, i
     for (int i = band_count; i < MAX_VIZ_BANDS; i++) {
         viz_decay_band(i);
         fft_noise_floor[i] *= 0.995f;
+    }
+
+    // Feed the Horizon landscape history every other frame.
+    horizon_tick ^= 1;
+    if (horizon_tick == 0) {
+        horizon_head = (horizon_head + 1) % HORIZON_ROWS;
+        for (int i = 0; i < MAX_VIZ_BANDS; i++)
+            horizon_hist[horizon_head][i] = (i < band_count) ? viz_levels[i] : 0.0f;
     }
 }
 
@@ -744,12 +759,77 @@ static void draw_mirror_mode(int band_count) {
     }
 }
 
+// 3D spectrum landscape, drawn back to front (painter's algorithm). Each row
+// is a ridge: a bright line over a dark body fill that occludes rows behind
+// it, with perspective shrink and fog toward the horizon.
+static void draw_horizon_mode(int band_count) {
+    Rect in = layout.viz_inner;
+    if (band_count < 2) band_count = 2;
+
+    uint16_t panel = mix565(cfg.bg_rgb, 0x0000, 150);
+
+    int cx = in.x + in.w / 2;
+    int front_y = in.y + in.h - 2;
+    int back_y = in.y + (in.h * 2) / 5;
+    if (back_y >= front_y) back_y = front_y - 1;
+    int ridge_max = (in.h * 11) / 20;
+    if (ridge_max < 2) ridge_max = 2;
+
+    const float persp_back = 1.0f / (1.0f + 2.4f);
+
+    for (int a = HORIZON_ROWS - 1; a >= 0; a--) {
+        const float *row = horizon_hist[(horizon_head - a + HORIZON_ROWS) % HORIZON_ROWS];
+        float t = (float)a / (float)(HORIZON_ROWS - 1);
+        float persp = 1.0f / (1.0f + 2.4f * t);
+        int baseline = front_y - (int)((float)(front_y - back_y) * (1.0f - persp) / (1.0f - persp_back));
+        int hw = (int)((float)(in.w / 2 - 2) * (0.35f + 0.65f * persp));
+        if (hw < 4) hw = 4;
+        int fog = (int)(t * 185.0f);
+        float rise = (float)ridge_max * persp;
+
+        int prev_x = cx - hw;
+        int prev_y = baseline - (int)(row[0] * rise);
+        for (int i = 1; i <= band_count; i++) {
+            int px, py;
+            if (i < band_count) {
+                px = cx - hw + (2 * hw * i) / (band_count - 1);
+                py = baseline - (int)(row[i] * rise);
+            } else {
+                px = prev_x + 1;   // close out the rightmost column
+                py = prev_y;
+            }
+            int dx = px - prev_x;
+            if (dx < 1) dx = 1;
+            for (int step = 0; step < dx; step++) {
+                int col = prev_x + step;
+                int y0 = prev_y + ((py - prev_y) * step) / dx;
+                int y1 = prev_y + ((py - prev_y) * (step + 1)) / dx;
+                int lo = (y0 < y1) ? y0 : y1;
+                int hi = (y0 > y1) ? y0 : y1;
+                float lvl = (float)(baseline - lo) / (rise + 0.001f);
+                if (lvl < 0.0f) lvl = 0.0f;
+                if (lvl > 1.0f) lvl = 1.0f;
+                uint16_t line_c = cfg.viz_gradient ? get_gradient_color(lvl) : cfg.fg_rgb;
+                line_c = mix565(line_c, panel, fog);
+                uint16_t body_c = mix565(panel, line_c, 70);
+                for (int yy = hi + 1; yy <= baseline; yy++) draw_pixel(col, yy, body_c);
+                for (int yy = lo; yy <= hi; yy++) draw_pixel(col, yy, line_c);
+            }
+            prev_x = px;
+            prev_y = py;
+        }
+    }
+}
+
 void viz_reset_state(void) {
     memset(viz_levels, 0, sizeof(viz_levels));
     memset(viz_peaks, 0, sizeof(viz_peaks));
     memset(viz_peak_timers, 0, sizeof(viz_peak_timers));
     memset(dot_trail, 0, sizeof(dot_trail));
     dot_trail_tick = 0;
+    memset(horizon_hist, 0, sizeof(horizon_hist));
+    horizon_head = 0;
+    horizon_tick = 0;
     memset(scope_ring, 0, sizeof(scope_ring));
     scope_ring_pos = 0;
     memset(scope_ghost_lo, 0, sizeof(scope_ghost_lo));
@@ -784,5 +864,7 @@ void viz_draw(void) {
         draw_scope_mode();
     } else if (cfg.viz_mode == VIZ_MODE_MIRROR) {
         draw_mirror_mode(band_count);
+    } else if (cfg.viz_mode == VIZ_MODE_HORIZON) {
+        draw_horizon_mode(band_count);
     }
 }

@@ -116,7 +116,8 @@ static int next_viz_mode(int mode) {
     if (mode == VIZ_MODE_DOTS) return VIZ_MODE_LINE;                                   // Dots -> Line
     if (mode == VIZ_MODE_LINE) return VIZ_MODE_SCOPE;                                  // Line -> Scope
     if (mode == VIZ_MODE_SCOPE) return VIZ_MODE_MIRROR;                                // Scope -> Mirror
-    return VIZ_MODE_BARS;                                                               // Mirror/unknown -> Bars
+    if (mode == VIZ_MODE_MIRROR) return VIZ_MODE_HORIZON;                              // Mirror -> Horizon
+    return VIZ_MODE_BARS;                                                               // Horizon/unknown -> Bars
 }
 
 static int is_valid_viz_mode(int mode) {
@@ -126,7 +127,8 @@ static int is_valid_viz_mode(int mode) {
            mode == VIZ_MODE_DOTS ||
            mode == VIZ_MODE_LINE ||
            mode == VIZ_MODE_SCOPE ||
-           mode == VIZ_MODE_MIRROR;
+           mode == VIZ_MODE_MIRROR ||
+           mode == VIZ_MODE_HORIZON;
 }
 
 static int normalize_viz_mode(int mode) {

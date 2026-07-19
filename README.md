@@ -36,14 +36,14 @@ This keeps EmuVR/RetroArch from handing images or media to the built-in viewers 
 - Read `M3U` playlists (UTF-8 and UTF-16)
 - Parse metadata from MP3, OGG, and FLAC tags
 - Show album art from nearby image files or embedded artwork
-- Display 6 visualizer modes: `Bars`, `VU Meter`, `Dots`, `Line`, `Scope`, `Mirror`
+- Display 7 visualizer modes: `Bars`, `VU Meter`, `Dots`, `Line`, `Scope`, `Mirror`, `Horizon`
 - Auto-arrange UI with responsive layout bounds
 - Preserve playback, pause, and shuffle state through LibRetro save states
 
 ## Controls
 
 - `B`: Pause/Play
-- `X`: Cycle visualizer mode (`Bars -> VU Meter -> Dots -> Line -> Scope -> Mirror`)
+- `X`: Cycle visualizer mode (`Bars -> VU Meter -> Dots -> Line -> Scope -> Mirror -> Horizon`)
 - `L` / `R`: Previous / Next track
 - `LEFT` / `RIGHT`: Seek backward / forward by about 3 seconds
 - `Y`: Toggle shuffle
@@ -73,7 +73,7 @@ When a track loads, art is searched in this order:
 
 ### Visualizer
 
-- Viz Mode: `Bars`, `VU Meter`, `Dots`, `Line`, `Scope`, `Mirror`
+- Viz Mode: `Bars`, `VU Meter`, `Dots`, `Line`, `Scope`, `Mirror`, `Horizon`
 - Viz Bands: `20` or `40`
 - Viz Gradient: `On/Off`
 - Peak Hold presets: `0`, `15`, `30`, `45`, `60` (default `30`)
