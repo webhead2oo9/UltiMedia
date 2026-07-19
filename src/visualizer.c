@@ -11,16 +11,25 @@ float viz_levels[MAX_VIZ_BANDS] = {0};
 float viz_peaks[MAX_VIZ_BANDS] = {0};
 int viz_peak_timers[MAX_VIZ_BANDS] = {0};
 
+// Frame duration from the frontend (60fps fallback); paces the trail/ghost/
+// history cadences and the VU integration in real time.
+static float viz_dt = 1.0f / 60.0f;
+#define VIZ_CADENCE_SEC (1.0f / 30.0f)
+
+void viz_set_frame_dt(float dt) {
+    viz_dt = dt;
+}
+
 // Dots-mode phosphor trail: previous dot heights, most recent first.
 static int dot_trail[MAX_VIZ_BANDS][2] = {{0}};
-static int dot_trail_tick = 0;
+static float dot_trail_acc = 0.0f;
 
 // Horizon mode: ring of recent spectrum rows forming a 3D landscape; the
 // newest ridge stands at the front and history recedes into fog.
 #define HORIZON_ROWS 24
 static float horizon_hist[HORIZON_ROWS][MAX_VIZ_BANDS] = {{0}};
 static int horizon_head = 0;
-static int horizon_tick = 0;
+static float horizon_acc = 0.0f;
 
 // Scope mode: raw mono sample ring plus per-column afterglow traces.
 #define SCOPE_RING 2048
@@ -30,7 +39,7 @@ static int16_t scope_ring[SCOPE_RING] = {0};
 static int scope_ring_pos = 0;
 static int16_t scope_ghost_lo[2][FB_WIDTH] = {{0}};
 static int16_t scope_ghost_hi[2][FB_WIDTH] = {{0}};
-static int scope_ghost_tick = 0;
+static float scope_ghost_acc = 0.0f;
 
 // 2048 points at 48kHz gives ~23Hz bins so the low log-spaced bands stop
 // sharing bins; the analysis window grows to ~43ms, fine for a visualizer.
@@ -304,9 +313,11 @@ static void fft_update_levels(const int16_t *audio_buf, int samples_per_frame, i
         fft_noise_floor[i] *= 0.995f;
     }
 
-    // Feed the Horizon landscape history every other frame.
-    horizon_tick ^= 1;
-    if (horizon_tick == 0) {
+    // Feed the Horizon landscape history at a fixed real-time cadence.
+    horizon_acc += viz_dt;
+    if (horizon_acc >= VIZ_CADENCE_SEC) {
+        horizon_acc -= VIZ_CADENCE_SEC;
+        if (horizon_acc > VIZ_CADENCE_SEC) horizon_acc = 0.0f;
         horizon_head = (horizon_head + 1) % HORIZON_ROWS;
         for (int i = 0; i < MAX_VIZ_BANDS; i++)
             horizon_hist[horizon_head][i] = (i < band_count) ? viz_levels[i] : 0.0f;
@@ -343,9 +354,11 @@ static void vu_update_levels(const int16_t *audio_buf, int samples_per_frame, in
         right_target = vu_db_level(sqrtf(right_sq / (float)level_samples));
     }
 
-    // ~150ms integration in both directions for the analog needle feel.
-    viz_levels[0] = viz_levels[0] * 0.88f + left_target * 0.12f;
-    viz_levels[1] = viz_levels[1] * 0.88f + right_target * 0.12f;
+    // ~150ms integration in both directions for the analog needle feel,
+    // converted to real time so the ballistics match on non-60Hz hosts.
+    float k = 1.0f - powf(0.88f, viz_dt * 60.0f);
+    viz_levels[0] += (left_target - viz_levels[0]) * k;
+    viz_levels[1] += (right_target - viz_levels[1]) * k;
 
     viz_update_peak(0);
     viz_update_peak(1);
@@ -437,9 +450,15 @@ static void draw_dots_mode(int band_count) {
     int base_y = layout.viz_inner.y + layout.viz_inner.h - 1;
     if (max_h < 1) max_h = 1;
 
-    // Record ghost positions every other frame so the trail visibly lags.
-    dot_trail_tick ^= 1;
-    int record = (dot_trail_tick == 0);
+    // Record ghost positions at a fixed real-time cadence so the trail lag
+    // reads the same on any host refresh rate.
+    dot_trail_acc += viz_dt;
+    int record = 0;
+    if (dot_trail_acc >= VIZ_CADENCE_SEC) {
+        record = 1;
+        dot_trail_acc -= VIZ_CADENCE_SEC;
+        if (dot_trail_acc > VIZ_CADENCE_SEC) dot_trail_acc = 0.0f;
+    }
 
     for (int i = 0; i < band_count; i++) {
         int h = (int)(viz_levels[i] * max_h);
@@ -631,8 +650,13 @@ static void draw_scope_mode(void) {
         }
     }
 
-    scope_ghost_tick ^= 1;
-    int record = (scope_ghost_tick == 0);
+    scope_ghost_acc += viz_dt;
+    int record = 0;
+    if (scope_ghost_acc >= VIZ_CADENCE_SEC) {
+        record = 1;
+        scope_ghost_acc -= VIZ_CADENCE_SEC;
+        if (scope_ghost_acc > VIZ_CADENCE_SEC) scope_ghost_acc = 0.0f;
+    }
 
     for (int x = 0; x < w; x++) {
         int s0 = win + (x * SCOPE_SPAN) / w;
@@ -836,15 +860,15 @@ void viz_reset_state(void) {
     memset(viz_peaks, 0, sizeof(viz_peaks));
     memset(viz_peak_timers, 0, sizeof(viz_peak_timers));
     memset(dot_trail, 0, sizeof(dot_trail));
-    dot_trail_tick = 0;
+    dot_trail_acc = 0.0f;
     memset(horizon_hist, 0, sizeof(horizon_hist));
     horizon_head = 0;
-    horizon_tick = 0;
+    horizon_acc = 0.0f;
     memset(scope_ring, 0, sizeof(scope_ring));
     scope_ring_pos = 0;
     memset(scope_ghost_lo, 0, sizeof(scope_ghost_lo));
     memset(scope_ghost_hi, 0, sizeof(scope_ghost_hi));
-    scope_ghost_tick = 0;
+    scope_ghost_acc = 0.0f;
     memset(fft_re, 0, sizeof(fft_re));
     memset(fft_im, 0, sizeof(fft_im));
     memset(fft_band_energy, 0, sizeof(fft_band_energy));

@@ -70,6 +70,9 @@ static int viz_mode_menu_value = 0;
 static int ff_rw_icon_timer = 0;
 static int ff_rw_dir = 0;
 static int seek_repeat_cooldown = 0;
+// Frame duration reported by the frontend; stays at the 60fps fallback when
+// the frontend does not support the frame-time callback.
+static retro_usec_t frame_time_usec = 1000000 / 60;
 static bool config_needs_refresh = true;
 static uint32_t shuffle_seed = 0;
 static uint32_t shuffle_state = 0;
@@ -98,6 +101,10 @@ static void reset_runtime_state(bool preserve_shuffle_mode);
 static size_t serialized_state_size(void);
 static void open_next_track(void);
 static void open_previous_track(void);
+
+static void frame_time_cb(retro_usec_t usec) {
+    frame_time_usec = usec;
+}
 
 // Edge-triggered button check: true only on the frame the button goes down.
 // Joypad IDs are < 16, so one uint16_t tracks every button's held state.
@@ -752,6 +759,11 @@ static void refresh_config_and_layout(void) {
 }
 
 void retro_run(void) {
+    float dt = (float)frame_time_usec / 1000000.0f;
+    if (dt < 0.001f || dt > 0.1f) dt = 1.0f / 60.0f;  // ignore stalls/garbage
+    ui_set_frame_dt(dt);
+    viz_set_frame_dt(dt);
+
     if (config_needs_refresh) {
         refresh_config_and_layout();
         config_needs_refresh = false;
@@ -953,6 +965,9 @@ bool retro_load_game(const struct retro_game_info *g) {
         unload_session();
         return false;
     }
+
+    struct retro_frame_time_callback ftcb = { frame_time_cb, 1000000 / 60 };
+    environ_cb(RETRO_ENVIRONMENT_SET_FRAME_TIME_CALLBACK, &ftcb);
 
     start_shuffle_cycle(generate_shuffle_seed());
     apply_config_update();

@@ -9,10 +9,17 @@
 #include <stdio.h>
 #include <string.h>
 
-#define MARQUEE_HOLD_FRAMES 90
+#define MARQUEE_HOLD_SEC 1.5f
+#define MARQUEE_SPEED_PXS 60.0f
 #define ICON_SIZE 10
 
-static int marquee_hold = MARQUEE_HOLD_FRAMES;
+static float ui_dt = 1.0f / 60.0f;
+static float marquee_hold = MARQUEE_HOLD_SEC;
+static float marquee_frac = 0.0f;
+
+void ui_set_frame_dt(float dt) {
+    ui_dt = dt;
+}
 
 // Every chrome color is derived from the user's bg/fg pair so the core
 // options keep controlling the theme.
@@ -41,7 +48,8 @@ static UiPalette ui_palette(void) {
 }
 
 void ui_reset_marquee(void) {
-    marquee_hold = MARQUEE_HOLD_FRAMES;
+    marquee_hold = MARQUEE_HOLD_SEC;
+    marquee_frac = 0.0f;
 }
 
 static void format_time(char *out, size_t out_sz, uint64_t frames, uint32_t rate) {
@@ -127,7 +135,8 @@ static void ui_draw_art_framed(int x, int y, int w, int h, const UiPalette *pal)
 }
 
 // Marquee: hold at the start, crawl left until the tail is visible, hold,
-// snap back. Static text stays pinned to the region's left edge.
+// snap back. Static text stays pinned to the region's left edge. Speed and
+// holds are in real time so playback rate stays correct on non-60Hz hosts.
 static void ui_update_marquee(int *scroll_x, int text_w, int region_x, int region_w) {
     if (text_w <= region_w) {
         *scroll_x = region_x;
@@ -137,20 +146,30 @@ static void ui_update_marquee(int *scroll_x, int text_w, int region_x, int regio
     int min_x = region_x + region_w - text_w;
     if (*scroll_x > region_x || *scroll_x < min_x) {
         *scroll_x = region_x;
-        marquee_hold = MARQUEE_HOLD_FRAMES;
+        marquee_hold = MARQUEE_HOLD_SEC;
+        marquee_frac = 0.0f;
         return;
     }
-    if (marquee_hold > 0) {
-        marquee_hold--;
+    if (marquee_hold > 0.0f) {
+        marquee_hold -= ui_dt;
         return;
     }
     if (*scroll_x == min_x) {
         *scroll_x = region_x;
-        marquee_hold = MARQUEE_HOLD_FRAMES;
+        marquee_hold = MARQUEE_HOLD_SEC;
+        marquee_frac = 0.0f;
         return;
     }
-    (*scroll_x)--;
-    if (*scroll_x == min_x) marquee_hold = MARQUEE_HOLD_FRAMES;
+    marquee_frac += MARQUEE_SPEED_PXS * ui_dt;
+    int move = (int)marquee_frac;
+    if (move > 0) {
+        marquee_frac -= (float)move;
+        *scroll_x -= move;
+        if (*scroll_x <= min_x) {
+            *scroll_x = min_x;
+            marquee_hold = MARQUEE_HOLD_SEC;
+        }
+    }
 }
 
 // Outline 1px outside the rect so the overlay never overwrites the pixels

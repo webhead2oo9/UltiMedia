@@ -12,6 +12,9 @@ extern int viz_peak_timers[MAX_VIZ_BANDS];
 // Update visualizer levels from audio buffer
 void viz_update_levels(const int16_t *audio_buf, int samples_per_frame);
 
+// Report the frontend's frame duration so cadences advance in real time
+void viz_set_frame_dt(float dt);
+
 // Draw current visualizer mode
 void viz_draw(void);
 

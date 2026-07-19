@@ -22,3 +22,6 @@ void ui_draw(UiFrame *frame);
 
 // Restart the marquee hold after a track change or state restore.
 void ui_reset_marquee(void);
+
+// Report the frontend's frame duration so animations advance in real time.
+void ui_set_frame_dt(float dt);
