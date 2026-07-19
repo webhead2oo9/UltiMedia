@@ -642,6 +642,108 @@ static void draw_scope_mode(void) {
     }
 }
 
+// Kenwood-style mirrored spectrum: bands fan out from a center emblem with an
+// outward shear, LED-segmented, over a horizon line with a dimmed reflection.
+static void draw_mirror_mode(int band_count) {
+    Rect in = layout.viz_inner;
+    int cx = in.x + in.w / 2;
+
+    uint16_t panel = mix565(cfg.bg_rgb, 0x0000, 150);
+    uint16_t unlit = mix565(panel, cfg.fg_rgb, 16);
+    uint16_t horizon = mix565(panel, cfg.fg_rgb, 40);
+
+    // Bars rise from a horizon line; the reflection lives below it.
+    int up_h = (in.h * 5) / 8;
+    if (up_h < 6) up_h = 6;
+    if (up_h > in.h - 1) up_h = in.h - 1;
+    int base_y = in.y + up_h;
+    int refl_h = in.y + in.h - base_y - 1;
+    if (refl_h < 0) refl_h = 0;
+    int max_h = up_h - 1;
+    if (max_h < 1) max_h = 1;
+    int max_shear = max_h / 6;
+
+    int emblem_w = 30;
+    if (emblem_w > in.w / 3) emblem_w = in.w / 3;
+    int half_avail = (in.w - emblem_w) / 2 - 2 - max_shear;
+    if (half_avail < 1) half_avail = 1;
+    if (band_count > half_avail) band_count = half_avail;
+    int spacing = half_avail / band_count;
+    if (spacing < 1) spacing = 1;
+    int bar_w = spacing - 1;
+    if (bar_w < 1) bar_w = 1;
+    if (bar_w > 4) bar_w = 4;
+
+    for (int x = 0; x < in.w; x++) draw_pixel(in.x + x, base_y, horizon);
+
+    for (int i = 0; i < band_count; i++) {
+        int h = (int)(viz_levels[i] * max_h);
+        if (h > max_h) h = max_h;
+        int off0 = emblem_w / 2 + 2 + i * spacing;
+
+        for (int side = 0; side < 2; side++) {
+            int dir = side ? -1 : 1;
+
+            // LED ladder leaning outward: shear grows with height.
+            for (int v = 0; v < max_h; v++) {
+                if ((v % 3) == 2) continue;
+                int bx = cx + dir * (off0 + v / 6);
+                uint16_t color = (v < h)
+                    ? (cfg.viz_gradient ? get_gradient_color((float)v / (float)max_h) : cfg.fg_rgb)
+                    : unlit;
+                for (int w = 0; w < bar_w; w++)
+                    draw_pixel(bx + dir * w, base_y - 1 - v, color);
+            }
+
+            // Reflection: lit segments only, half height, dimmed toward panel.
+            int rh = h / 2;
+            if (rh > refl_h) rh = refl_h;
+            for (int v = 0; v < rh; v++) {
+                if ((v % 3) == 2) continue;
+                int bx = cx + dir * (off0 + (v * 2) / 6);
+                uint16_t src = cfg.viz_gradient ? get_gradient_color((float)(v * 2) / (float)max_h) : cfg.fg_rgb;
+                uint16_t color = mix565(src, panel, 150);
+                for (int w = 0; w < bar_w; w++)
+                    draw_pixel(bx + dir * w, base_y + 1 + v, color);
+            }
+
+            if (cfg.viz_peak_hold > 0 && viz_peak_timers[i] > 0) {
+                int ph = (int)(viz_peaks[i] * max_h);
+                if (ph >= max_h) ph = max_h - 1;
+                int bx = cx + dir * (off0 + ph / 6);
+                uint16_t pc = cfg.viz_gradient ? 0xF800 : cfg.fg_rgb;
+                for (int w = 0; w < bar_w; w++)
+                    draw_pixel(bx + dir * w, base_y - 1 - ph, pc);
+            }
+        }
+    }
+
+    // Center emblem: a bass-pulsing diamond crest — a dim outline ring with a
+    // solid core that grows and heats up with the low bands.
+    float bass = (viz_levels[0] + viz_levels[1] + viz_levels[2]) / 3.0f;
+    int es = 18 + (int)(bass * 8.0f);
+    if (es > emblem_w - 2) es = emblem_w - 2;
+    if (es > up_h - 2) es = up_h - 2;
+    if (es >= 6) {
+        int r = es / 2;
+        int my = in.y + (up_h - es) / 2 + r;
+        uint16_t ring = mix565(panel, cfg.fg_rgb, 80);
+        uint16_t core = cfg.viz_gradient ? get_gradient_color(bass) : cfg.fg_rgb;
+
+        for (int dy = -r; dy <= r; dy++) {
+            int wl = r - ((dy < 0) ? -dy : dy);
+            draw_pixel(cx - wl, my + dy, ring);
+            draw_pixel(cx + wl, my + dy, ring);
+        }
+        int rc = r - 3;
+        if (rc < 1) rc = 1;
+        for (int dy = -rc; dy <= rc; dy++) {
+            int wl = rc - ((dy < 0) ? -dy : dy);
+            for (int dx = -wl; dx <= wl; dx++) draw_pixel(cx + dx, my + dy, core);
+        }
+    }
+}
+
 void viz_reset_state(void) {
     memset(viz_levels, 0, sizeof(viz_levels));
     memset(viz_peaks, 0, sizeof(viz_peaks));
@@ -680,5 +782,7 @@ void viz_draw(void) {
         draw_vu_meter_mode();
     } else if (cfg.viz_mode == VIZ_MODE_SCOPE) {
         draw_scope_mode();
+    } else if (cfg.viz_mode == VIZ_MODE_MIRROR) {
+        draw_mirror_mode(band_count);
     }
 }

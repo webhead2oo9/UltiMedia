@@ -27,7 +27,7 @@ UltiMedia is a LibRetro audio player and music visualizer that runs as a core pl
 | `audio.c` | Audio decoding, resampling, decoder snapshot restore |
 | `audio_codecs.c` | Third-party audio decoder implementations (`dr_*`, `stb_vorbis`) |
 | `video.c` | Framebuffer, drawing primitives (fill/bevel/blend/dither), and text rendering |
-| `visualizer.c` | Visualizations: Bars, VU Meter, Dots, Line, Scope (drawn inside `layout.viz_inner`) |
+| `visualizer.c` | Visualizations: Bars, VU Meter, Dots, Line, Scope, Mirror (drawn inside `layout.viz_inner`) |
 | `metadata.c` | Track metadata parsing and album-art lookup/loading |
 | `image_codecs.c` | Third-party image decoder implementation (`stb_image`) |
 | `config.c` | LibRetro core options (declare + read) |
@@ -124,7 +124,7 @@ All keys are prefixed `media_`, declared in `config_declare_variables()` and rea
 
 - **Visibility (On/Off, all On):** `media_show_art`, `media_show_txt`, `media_show_viz`, `media_show_bar`, `media_show_tim`, `media_show_ico` (transport icon row — additionally auto-hides when the content area is too short)
 - **Layout:** `media_debug_layout` (Off) and usable-region bounds `media_ui_top` (20), `media_ui_bottom` (80), `media_ui_left` (10), `media_ui_right` (90), as percentages
-- **Visualizer:** `media_viz_mode` (`Bars` | `VU Meter` | `Dots` | `Line` | `Scope`; legacy `FFT EQ` maps to `Bars`), `media_viz_bands` (40; presets 40/20), `media_viz_gradient` (On), `media_viz_peak_hold` (30)
+- **Visualizer:** `media_viz_mode` (`Bars` | `VU Meter` | `Dots` | `Line` | `Scope` | `Mirror`; legacy `FFT EQ` maps to `Bars`), `media_viz_bands` (40; presets 40/20), `media_viz_gradient` (On), `media_viz_peak_hold` (30)
 - **Track text:** `media_use_filename` — `Show ID` (metadata) | `Show filename with extension` | `Show Filename without extension`
 - **Colors:** six 0–255 channels `media_bg_r/g/b` (0/64/0) and `media_fg_r/g/b` (0/255/0), packed into `cfg.bg_rgb` / `cfg.fg_rgb` as RGB565
 
@@ -133,7 +133,7 @@ All keys are prefixed `media_`, declared in `config_declare_variables()` and rea
 | Button | Action |
 |---|---|
 | `B` | Pause / Play |
-| `X` | Cycle visualizer (`Bars → VU Meter → Dots → Line → Scope`) |
+| `X` | Cycle visualizer (`Bars → VU Meter → Dots → Line → Scope → Mirror`) |
 | `L` / `R` | Previous / Next track |
 | `LEFT` / `RIGHT` | Seek backward / forward ~3 seconds |
 | `Y` | Toggle shuffle |

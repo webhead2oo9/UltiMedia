@@ -16,7 +16,8 @@ typedef enum {
     VIZ_MODE_LINE = 2,
     VIZ_MODE_VU = 3,
     VIZ_MODE_FFT_EQ_LEGACY = 4,
-    VIZ_MODE_SCOPE = 5
+    VIZ_MODE_SCOPE = 5,
+    VIZ_MODE_MIRROR = 6
 } VizMode;
 
 // Configuration structure for all UI and display options
