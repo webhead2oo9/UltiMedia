@@ -73,6 +73,9 @@ static int seek_repeat_cooldown = 0;
 // Frame duration reported by the frontend; stays at the 60fps fallback when
 // the frontend does not support the frame-time callback.
 static retro_usec_t frame_time_usec = 1000000 / 60;
+// A resolution change happened outside retro_run; SET_GEOMETRY is only legal
+// from within retro_run, so the notification is deferred to the next frame.
+static bool geometry_dirty = false;
 static bool config_needs_refresh = true;
 static uint32_t shuffle_seed = 0;
 static uint32_t shuffle_state = 0;
@@ -104,6 +107,16 @@ static void open_previous_track(void);
 
 static void frame_time_cb(retro_usec_t usec) {
     frame_time_usec = usec;
+}
+
+// Apply the configured resolution to the framebuffer wherever config is
+// re-read (run/reset/unserialize); the frontend learns about it on the next
+// retro_run via SET_GEOMETRY.
+static void apply_resolution_from_config(void) {
+    int scale = (cfg.ui_scale > 0) ? cfg.ui_scale : 1;
+    if (320 * scale == fb_width) return;
+    video_set_resolution(320 * scale, 240 * scale);
+    geometry_dirty = true;
 }
 
 // Edge-triggered button check: true only on the frame the button goes down.
@@ -742,19 +755,7 @@ static void refresh_config_and_layout(void) {
     int old_ui_scale = cfg.ui_scale;
     apply_config_update();
 
-    if (cfg.ui_scale != old_ui_scale) {
-        // Switch within the pre-declared max via SET_GEOMETRY: unlike
-        // SET_SYSTEM_AV_INFO this does not reinitialize the video driver
-        // (which would tear down EmuVR's shared-texture pipeline).
-        video_set_resolution(320 * cfg.ui_scale, 240 * cfg.ui_scale);
-        struct retro_game_geometry geom = {
-            (unsigned)fb_width, (unsigned)fb_height,
-            FB_MAX_WIDTH, FB_MAX_HEIGHT,
-            4.0f / 3.0f
-        };
-        environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &geom);
-    }
-
+    apply_resolution_from_config();
     layout_compute();
 
     if (track_count > 0 &&
@@ -763,10 +764,12 @@ static void refresh_config_and_layout(void) {
         tracks[current_idx]) {
         if (old_track_text_mode != cfg.track_text_mode)
             metadata_refresh_display(tracks[current_idx], cfg.track_text_mode);
-        // Restart the marquee when the text mode changes or the title is
-        // re-enabled, so it never resumes from a stale mid-scroll position.
+        // Restart the marquee when the text mode changes, the title is
+        // re-enabled, or the resolution scale changes, so it never resumes
+        // from a stale or wrong-scale mid-scroll position.
         if (old_track_text_mode != cfg.track_text_mode ||
-            (cfg.show_txt && !old_show_txt)) {
+            (cfg.show_txt && !old_show_txt) ||
+            cfg.ui_scale != old_ui_scale) {
             scroll_x = layout.text.x;
             ui_reset_marquee();
         }
@@ -787,6 +790,19 @@ void retro_run(void) {
         if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated)
             refresh_config_and_layout();
     }
+
+    if (geometry_dirty) {
+        // Within the pre-declared max, SET_GEOMETRY changes size without a
+        // driver reinit (which would tear down EmuVR's shared-texture pipe).
+        struct retro_game_geometry geom = {
+            (unsigned)fb_width, (unsigned)fb_height,
+            FB_MAX_WIDTH, FB_MAX_HEIGHT,
+            4.0f / 3.0f
+        };
+        environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &geom);
+        geometry_dirty = false;
+    }
+
     input_poll_cb();
 
     // 1. Handle Inputs
@@ -986,7 +1002,10 @@ bool retro_load_game(const struct retro_game_info *g) {
 
     start_shuffle_cycle(generate_shuffle_seed());
     apply_config_update();
+    // The frontend queries retro_get_system_av_info after load, so the base
+    // size is declared there; no SET_GEOMETRY needed for this change.
     video_set_resolution(320 * cfg.ui_scale, 240 * cfg.ui_scale);
+    geometry_dirty = false;
     layout_compute();
 
     bool opened = open_track(0);
@@ -1170,6 +1189,7 @@ bool retro_unserialize(const void *d, size_t s) {
 
     apply_config_update();
     cfg.viz_mode = normalize_viz_mode(state->viz_mode);
+    apply_resolution_from_config();
     layout_compute();
 
     reset_runtime_state(state->is_shuffle != 0);
@@ -1181,7 +1201,8 @@ bool retro_unserialize(const void *d, size_t s) {
     metadata_load(tracks[current_idx], m3u_base_path, cfg.track_text_mode);
     is_paused = state->is_paused != 0;
     is_shuffle = state->is_shuffle != 0;
-    int restored_scale = (layout.text_scale > 0) ? layout.text_scale : 1;
+    int restored_scale = ((layout.text_scale > 0) ? layout.text_scale : 1)
+                       * ((cfg.ui_scale > 0) ? cfg.ui_scale : 1);
     int min_scroll_x = -((int)strlen(display_str) * GLYPH_WIDTH * restored_scale);
     scroll_x = state->scroll_x;
     if (scroll_x < min_scroll_x || scroll_x > fb_width) scroll_x = fb_width;

@@ -105,7 +105,7 @@ Key constants:
 
 ### Constraints to respect
 
-- The display is fixed at **320x240, RGB565** — keep rendering within those bounds.
+- The UI is authored at a logical **320x240, RGB565** and multiplied by the resolution scale (`cfg.ui_scale`, 1x-4x) — position from `layout.*` and multiply pixel constants by the scale.
 - Keep memory usage minimal (embedded/emulator context).
 - **New UI elements are positioned from `layout.*` and should slot into the layout's degradation priority (transport → title scale → visualizer height).** Put audio/visual logic in the matching `src/` module.
 

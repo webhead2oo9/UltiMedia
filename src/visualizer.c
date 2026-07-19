@@ -20,8 +20,11 @@ void viz_set_frame_dt(float dt) {
     viz_dt = dt;
 }
 
-// Resolution scale (1x = 320x240, 2x = 640x480): pixel-sized details are
-// authored at 1x and multiplied so the modes read identically when scaled.
+// Resolution scale (1x-4x multiples of 320x240): chunky elements (LED
+// segments, dots, meters, peak markers) are authored at 1x and multiplied so
+// they read identically when scaled. Hairline traces — the Line connector,
+// the Scope trace, and graticule dots — deliberately stay one pixel: getting
+// finer with resolution is the point of those elements.
 static int viz_s(void) {
     return (cfg.ui_scale > 0) ? cfg.ui_scale : 1;
 }
@@ -682,8 +685,10 @@ static void draw_scope_mode(void) {
             uint16_t c = cfg.viz_gradient ? get_gradient_color((float)dist / (float)half) : cfg.fg_rgb;
             draw_pixel(x0 + x, cy - yy, c);
         }
-        if (yhi + 1 <= half) draw_pixel(x0 + x, cy - (yhi + 1), glow);
-        if (ylo - 1 >= -half) draw_pixel(x0 + x, cy - (ylo - 1), glow);
+        for (int g = 1; g <= viz_s(); g++) {
+            if (yhi + g <= half) draw_pixel(x0 + x, cy - (yhi + g), glow);
+            if (ylo - g >= -half) draw_pixel(x0 + x, cy - (ylo - g), glow);
+        }
 
         if (record) {
             scope_ghost_lo[1][x] = scope_ghost_lo[0][x];
@@ -742,7 +747,7 @@ static void draw_mirror_mode(int band_count) {
 
             // LED ladder leaning outward: shear grows with height.
             for (int v = 0; v < max_h; v++) {
-                if ((v % 3) == 2) continue;
+                if (((v / s) % 3) == 2) continue;
                 int bx = cx + dir * (off0 + v / 6);
                 uint16_t color = (v < h)
                     ? (cfg.viz_gradient ? get_gradient_color((float)v / (float)max_h) : cfg.fg_rgb)
@@ -755,7 +760,7 @@ static void draw_mirror_mode(int band_count) {
             int rh = h / 2;
             if (rh > refl_h) rh = refl_h;
             for (int v = 0; v < rh; v++) {
-                if ((v % 3) == 2) continue;
+                if (((v / s) % 3) == 2) continue;
                 int bx = cx + dir * (off0 + (v * 2) / 6);
                 uint16_t src = cfg.viz_gradient ? get_gradient_color((float)(v * 2) / (float)max_h) : cfg.fg_rgb;
                 uint16_t color = mix565(src, panel, 150);
